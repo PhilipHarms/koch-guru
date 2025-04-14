@@ -23,7 +23,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(message, parse_mode="Markdown")
 
-    elif "koch" in user_message or "rezept" in user_message:
+    elif "neu" in user_message or "nicht in Notion" in user_message:
         await update.message.reply_text("Einen Moment, ich suche passende Rezeptideen für dich… 🍳")
         gpt_response = ask_gpt(user_message)
         await update.message.reply_text(gpt_response)
