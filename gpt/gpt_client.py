@@ -72,7 +72,8 @@ def suggest_tagged_recipes_from_list(user_message: str, recipes: list, limit: in
         "Der Nutzer hat dir Wünsche oder Einschränkungen genannt. "
         "Wähle daraus maximal 4 passende Rezepte."
         "Wenn es kein passendes Repzept gibt, sage, dass du kein passendes Rezept finden konntest."
-        "Beziehe dich NUR auf die vorliegenden Rezepte, erfinde keine neuen. "
+        "Beziehe dich NUR auf die vorliegenden Rezepte, erfinde keine neuen."
+        "Schlage ein Rezept NICHT VOR, wenn es nicht dem Wunsch oder der Einschränkung des Nutzers entspricht."
         "Formatiere sie als freundliche Liste. Gib keine Rohdaten oder JSON zurück."
     )
 
