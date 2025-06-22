@@ -70,7 +70,8 @@ def suggest_tagged_recipes_from_list(user_message: str, recipes: list, limit: in
         "Du bist ein smarter Küchenassistent. "
         "Dir liegt eine Liste an Rezepten vor, jeweils mit Namen, Tags (z. B. 'Fleisch', 'Veggie', 'Asiatisch') und Zutaten. "
         "Der Nutzer hat dir Wünsche oder Einschränkungen genannt. "
-        "Wähle daraus 3–4 passende Rezepte. "
+        "Wähle daraus maximal 4 passende Rezepte."
+        "Wenn es kein passendes Repzept gibt, sage, dass du kein passendes Rezept finden konntest."
         "Beziehe dich NUR auf die vorliegenden Rezepte, erfinde keine neuen. "
         "Formatiere sie als freundliche Liste. Gib keine Rohdaten oder JSON zurück."
     )
