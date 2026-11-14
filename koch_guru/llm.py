@@ -31,17 +31,14 @@ class LLMClient:
         self,
         *,
         system: str,
-        user: str,
+        messages: list[dict[str, str]],
         output_type: type[T],
         max_tokens: int = 2048,
     ) -> T:
         """Ask the model for a response that is validated against `output_type`."""
         completion = await self._client.chat.completions.parse(
             model=self.model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=[{"role": "system", "content": system}, *messages],
             response_format=output_type,
             max_tokens=max_tokens,
             # Only route to providers that enforce the JSON schema.

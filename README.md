@@ -6,10 +6,13 @@ KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdaten
 
 - Freitext verstehen: „was Schnelles, vegetarisch“, „wir haben noch Brokkoli und Feta“, „Ideen für die Woche“
 - Bis zu vier passende Rezepte mit Link und kurzer Begründung vorschlagen, oder ehrlich sagen, dass nichts passt
+- Rückfragen verstehen („lieber ohne Fleisch“, „noch was anderes“); der Verlauf gilt pro Chat und wird nach zwei Stunden Pause oder mit `/neu` vergessen
+- Wochenliste: 📅 unter einem Vorschlag setzt die Checkbox „This Week?“ in Notion, ✅ nimmt sie wieder raus
+- `/woche`: Wochenliste anzeigen, `/woche_leeren`: alle Häkchen entfernen
 - `/zufall`: vier zufällige Rezepte
 - `/aktualisieren`: Rezepte sofort neu aus Notion laden (sonst alle 5 Minuten automatisch)
 
-Geplant: Gesprächsverlauf und „Cook this Week“, danach neue Rezepte per Link oder Foto anlegen.
+Geplant: „Zuletzt gekocht“ und Zubereitungszeit (erst testweise für einzelne Rezepte), danach neue Rezepte per Link oder Foto anlegen.
 
 ## Aufbau
 
@@ -21,6 +24,7 @@ koch_guru/
   notion_repo.py            Notion-Zugriff: Datenquelle, Property-Mapping, Pagination, Cache
   llm.py                    OpenRouter-Client mit Structured Output
   services/recommend.py     Prompt, Auswahl und Validierung der Empfehlungen
+  services/conversation.py  Kurzzeit-Gesprächsverlauf pro Chat (im Speicher)
   bot/app.py                Telegram-Anwendung, Zugriffsschutz, Fehlerbehandlung
   bot/handlers.py           Befehle und Nachrichten
   bot/render.py             Telegram-HTML mit Escaping
@@ -40,9 +44,14 @@ Grundprinzip: Claude liefert nur Nummern aus der Rezeptliste plus Begründung. D
 | `ALLOWED_USER_IDS` | empfohlen | Komma-getrennte Telegram-User-IDs, die den Bot nutzen dürfen. Leer: Der Bot antwortet allen nur mit ihrer eigenen ID. |
 | `OPENROUTER_MODEL` | nein | Modell-Slug bei OpenRouter, Standard `anthropic/claude-sonnet-5.5` |
 | `RECIPE_CACHE_SECONDS` | nein | Standard 300 |
-| `NOTION_PROP_LINK`, `NOTION_PROP_TAGS`, `NOTION_PROP_INGREDIENTS` | nein | Property-Namen, Standard `Link`, `Tags`, `Zutaten` |
+| `NOTION_PROP_LINK`, `NOTION_PROP_TAGS`, `NOTION_PROP_ORIGIN`, `NOTION_PROP_INGREDIENTS`, `NOTION_PROP_THIS_WEEK` | nein | Property-Namen, Standard `Link`, `Tags`, `Origin`, `Ingredients`, `This Week?` |
 
 Die Titel-Property wird automatisch erkannt. Fehlt die Link-Property unter dem erwarteten Namen, nimmt der Bot die erste URL-Property. Beim Start steht im Log, welche Properties verwendet werden.
+
+## Notion-Integration
+
+- **Zutaten:** `Ingredients` ist eine Verknüpfung zu einer eigenen Zutaten-Datenbank. Damit der Bot die Zutatennamen lesen kann, muss auch diese Datenbank mit der Integration verbunden sein (Datenbank öffnen › ••• › Connections). Ohne Zugriff lädt der Bot die Rezepte ohne Zutaten und schreibt einen Hinweis ins Log.
+- **Wochenliste:** Zum Setzen der Checkbox braucht die Integration die Berechtigung „Update content“.
 
 Die eigene Telegram-ID findest du, indem du dem Bot schreibst, solange `ALLOWED_USER_IDS` leer ist.
 

@@ -4,8 +4,10 @@ from koch_guru.models import Recipe
 from koch_guru.services.recommend import (
     Pick,
     Selection,
+    Recommendation,
+    Suggestion,
     build_catalog,
-    build_user_prompt,
+    build_system_prompt,
     recommend,
     to_recommendation,
 )
@@ -27,21 +29,30 @@ class FakeLLM:
         self.selection = selection
         self.calls = []
 
-    async def structured(self, *, system, user, output_type):
-        self.calls.append({"system": system, "user": user, "output_type": output_type})
+    async def structured(self, *, system, messages, output_type):
+        self.calls.append({"system": system, "messages": messages, "output_type": output_type})
         return self.selection
 
 
 def test_catalog_is_numbered_from_one():
     catalog = build_catalog(RECIPES)
-    assert catalog.splitlines()[0] == "[1] Brokkoli-Pasta | Tags: Nudeln, Vegetarisch | Zutaten: Brokkoli; Feta"
+    assert catalog.splitlines()[0] == "[1] Brokkoli-Pasta | Tags: Nudeln, Vegetarisch | Zutaten: Brokkoli, Feta"
     assert catalog.splitlines()[1] == "[2] Chili con Carne | Tags: Fleisch"
 
 
-def test_prompt_has_german_date_and_season():
-    prompt = build_user_prompt("was Warmes", RECIPES, date(2026, 11, 14))
+def test_catalog_shows_origin_and_weekly_list():
+    recipe = Recipe(id="x", name="Sweet Potatoes, Tomatoes, Lentils", notion_url="u",
+                    tags=("Veggie",), origin=("Green Feast (Autumn Winter)",), this_week=True)
+    assert build_catalog([recipe]) == (
+        "[1] Sweet Potatoes, Tomatoes, Lentils | Tags: Veggie | "
+        "Quelle: Green Feast (Autumn Winter) | steht schon auf der Wochenliste"
+    )
+
+
+def test_system_prompt_has_german_date_season_and_catalog():
+    prompt = build_system_prompt(RECIPES, date(2026, 11, 14))
     assert "14. November 2026 (Herbst)" in prompt
-    assert "<nachricht>\nwas Warmes\n</nachricht>" in prompt
+    assert "<rezeptsammlung>\n[1] Brokkoli-Pasta" in prompt
 
 
 def test_invalid_and_duplicate_numbers_are_dropped_and_capped():
@@ -59,7 +70,8 @@ async def test_recommend_passes_catalog_and_maps_result():
     llm = FakeLLM(Selection(antwort="Zwei vegetarische Ideen", rezepte=[Pick(nr=4, grund="wärmt"), Pick(nr=1, grund="Brokkoli weg")]))
     rec = await recommend("vegetarisch, wir haben Brokkoli", RECIPES, llm, today=date(2026, 11, 14))
     assert [s.recipe.id for s in rec.suggestions] == ["p3", "p0"]
-    assert "[5] Ramen" in llm.calls[0]["user"]
+    assert "[5] Ramen" in llm.calls[0]["system"]
+    assert llm.calls[0]["messages"] == [{"role": "user", "content": "vegetarisch, wir haben Brokkoli"}]
     assert llm.calls[0]["output_type"] is Selection
 
 
@@ -68,3 +80,16 @@ async def test_empty_database_skips_llm():
     rec = await recommend("egal", [], llm)
     assert rec.suggestions == [] and "leer" in rec.message
     assert llm.calls == []
+
+
+async def test_history_is_prepended_to_the_new_message():
+    llm = FakeLLM(Selection(antwort="ok", rezepte=[]))
+    history = [{"role": "user", "content": "was Warmes"}, {"role": "assistant", "content": "- Kürbissuppe (wärmt)"}]
+    await recommend("lieber ohne Suppe", RECIPES, llm, history=history)
+    assert llm.calls[0]["messages"] == [*history, {"role": "user", "content": "lieber ohne Suppe"}]
+
+
+def test_history_text_uses_names_not_numbers():
+    rec = Recommendation(message="Zwei Ideen", suggestions=[Suggestion(RECIPES[4], "schnell")])
+    assert rec.as_history() == "Zwei Ideen\n- Ramen (schnell)"
+    assert Recommendation(message="", suggestions=[]).as_history() == "(keine Vorschläge)"

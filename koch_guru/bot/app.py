@@ -6,9 +6,17 @@ import logging
 
 from notion_client import AsyncClient
 from telegram import BotCommand, Update
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from koch_guru.bot import handlers
+from koch_guru.bot.render import WEEK_CALLBACK_PREFIX
 from koch_guru.config import Settings, load_settings
 from koch_guru.llm import LLMClient
 from koch_guru.notion_repo import RecipeRepository
@@ -16,7 +24,10 @@ from koch_guru.notion_repo import RecipeRepository
 log = logging.getLogger(__name__)
 
 COMMANDS = [
+    BotCommand("woche", "Wochenliste anzeigen"),
+    BotCommand("woche_leeren", "Wochenliste leeren"),
     BotCommand("zufall", "Vier zufällige Rezepte"),
+    BotCommand("neu", "Gespräch neu beginnen"),
     BotCommand("aktualisieren", "Rezepte neu aus Notion laden"),
     BotCommand("start", "Hilfe anzeigen"),
 ]
@@ -48,7 +59,9 @@ def build_application(settings: Settings) -> Application:
         .post_shutdown(post_shutdown)
         .build()
     )
-    app.bot_data["services"] = handlers.Services(repo=repo, llm=llm)
+    app.bot_data["services"] = handlers.Services(
+        repo=repo, llm=llm, allowed_user_ids=settings.allowed_user_ids
+    )
     register_handlers(app, settings.allowed_user_ids)
     return app
 
@@ -66,6 +79,11 @@ def register_handlers(app: Application, allowed_user_ids: frozenset[int]) -> Non
     app.add_handler(CommandHandler(["start", "hilfe", "help"], handlers.start, filters=allowed))
     app.add_handler(CommandHandler("zufall", handlers.random_recipes, filters=allowed))
     app.add_handler(CommandHandler("aktualisieren", handlers.refresh, filters=allowed))
+    app.add_handler(CommandHandler("woche", handlers.week, filters=allowed))
+    app.add_handler(CommandHandler("woche_leeren", handlers.week_clear, filters=allowed))
+    app.add_handler(CommandHandler("neu", handlers.reset_conversation, filters=allowed))
+    # Callback queries are checked against the allowlist inside the handler.
+    app.add_handler(CallbackQueryHandler(handlers.toggle_week, pattern=f"^{WEEK_CALLBACK_PREFIX}"))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, handlers.suggest))
     app.add_handler(MessageHandler(allowed, handlers.unsupported))
     app.add_handler(
