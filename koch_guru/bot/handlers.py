@@ -6,6 +6,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 
+import httpx
 import openai
 from notion_client import APIErrorCode, APIResponseError
 from telegram import InlineKeyboardMarkup, LinkPreviewOptions, Update
@@ -13,8 +14,12 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 
 from koch_guru.bot.render import (
+    IMPORT_CALLBACK_PREFIX,
     WEEK_CALLBACK_PREFIX,
+    import_keyboard,
     parse_week_button,
+    recipe_link,
+    render_draft_preview,
     render_recipe_list,
     render_recommendation,
     toggled_keyboard,
@@ -24,6 +29,8 @@ from koch_guru.llm import LLMClient
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.services.conversation import ConversationStore
+from koch_guru.services.drafts import DraftStore
+from koch_guru.services.importer import RecipeImportError, find_url, import_from_url
 from koch_guru.services.recommend import recommend
 
 log = logging.getLogger(__name__)
@@ -37,6 +44,7 @@ HELP_TEXT = (
     "• <i>Wir haben noch Brokkoli und Feta</i>\n"
     "• <i>Ideen für die Woche, gern mal was Asiatisches</i>\n"
     "Rückfragen wie <i>lieber ohne Fleisch</i> verstehe ich auch.\n\n"
+    "Schick mir einen Link zu einem Rezept, dann lege ich es nach kurzer Vorschau in Notion an.\n\n"
     "Mit 📅 unter einem Vorschlag setzt du das Rezept auf die Wochenliste, mit ✅ wieder runter.\n\n"
     "/woche: Wochenliste anzeigen\n"
     "/woche_leeren: Wochenliste leeren\n"
@@ -52,6 +60,8 @@ class Services:
     llm: LLMClient
     conversations: ConversationStore = field(default_factory=ConversationStore)
     allowed_user_ids: frozenset[int] = frozenset()
+    http: httpx.AsyncClient | None = None
+    drafts: DraftStore = field(default_factory=DraftStore)
 
 
 def services(context: ContextTypes.DEFAULT_TYPE) -> Services:
@@ -142,11 +152,15 @@ async def week_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await reply_html(update, text)
 
 
+def is_allowed(update: Update, svc: Services) -> bool:
+    return update.effective_user is not None and update.effective_user.id in svc.allowed_user_ids
+
+
 async def toggle_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Button under a suggestion: put the recipe on the weekly list or take it off."""
     query = update.callback_query
     svc = services(context)
-    if update.effective_user is None or update.effective_user.id not in svc.allowed_user_ids:
+    if not is_allowed(update, svc):
         await query.answer("Dieser Bot ist privat.")
         return
 
@@ -164,6 +178,67 @@ async def toggle_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"{name} ist runter von der Wochenliste." if on_list else f"{name} steht auf der Wochenliste."
     )
     await query.edit_message_reply_markup(toggled_keyboard(markup, query.data, not on_list))
+
+
+async def import_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A message with a link: read the recipe and show a preview with Save/Discard buttons."""
+    message = update.effective_message
+    url = find_url(message.text or "")
+    if not url:
+        return
+    await message.chat.send_action(ChatAction.TYPING)
+    svc = services(context)
+
+    try:
+        draft = await import_from_url(url, svc.http, svc.llm, svc.repo.tag_options)
+    except RecipeImportError as exc:
+        await reply_html(update, f"{exc} Das Rezept kann ich so leider nicht übernehmen.")
+        return
+
+    existing, reason = await svc.repo.find_existing(draft)
+    if reason == "link":
+        await reply_html(
+            update, f"Das Rezept ist schon in deiner Sammlung: {recipe_link(existing)}",
+            keyboard_for(svc, [existing]),
+        )
+        return
+
+    preview = render_draft_preview(draft, similar=existing)
+    draft_id = svc.drafts.add(draft, preview)
+    await reply_html(update, preview, import_keyboard(draft_id))
+
+
+async def import_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Save or discard a previewed recipe."""
+    query = update.callback_query
+    svc = services(context)
+    if not is_allowed(update, svc):
+        await query.answer("Dieser Bot ist privat.")
+        return
+
+    action, _, draft_id = query.data.removeprefix(IMPORT_CALLBACK_PREFIX).partition(":")
+    pending = svc.drafts.pop(draft_id)
+    if pending is None:
+        await query.answer("Der Entwurf ist abgelaufen. Schick mir den Link bitte nochmal.", show_alert=True)
+        await query.edit_message_reply_markup(None)
+        return
+
+    base = pending.preview_html.rsplit("\n\n", 1)[0]  # drop the question at the end
+    if action != "save":
+        await query.answer("Verworfen.")
+        await query.edit_message_text(
+            f"{base}\n\n✖️ Verworfen.", parse_mode=ParseMode.HTML, link_preview_options=NO_PREVIEW
+        )
+        return
+
+    recipe = await svc.repo.create_recipe(pending.draft)
+    await query.answer("Gespeichert.")
+    await query.edit_message_text(
+        f"{base}\n\n✅ In Notion angelegt: {recipe_link(recipe)}",
+        parse_mode=ParseMode.HTML,
+        link_preview_options=NO_PREVIEW,
+        reply_markup=keyboard_for(svc, [recipe]),
+    )
 
 
 async def unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -188,7 +263,7 @@ def error_text(error: BaseException | None) -> str:
     if isinstance(error, APIResponseError) and error.code == APIErrorCode.RestrictedResource:
         return (
             "Notion lässt den Bot das nicht tun. Prüf in den Einstellungen der Notion-Integration, "
-            "ob „Update content“ aktiviert ist."
+            "ob „Update content“ und „Insert content“ aktiviert sind."
         )
     if isinstance(error, APIResponseError):
         return "Notion hat gerade einen Fehler gemeldet. Versuch es gleich nochmal."

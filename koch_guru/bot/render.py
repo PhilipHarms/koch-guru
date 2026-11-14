@@ -7,6 +7,7 @@ from html import escape
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from koch_guru.models import Recipe
+from koch_guru.services.importer import RecipeDraft
 from koch_guru.services.recommend import Recommendation
 
 
@@ -71,3 +72,44 @@ def toggled_keyboard(markup: InlineKeyboardMarkup, callback_data: str, on_list: 
             new_row.append(button)
         rows.append(new_row)
     return InlineKeyboardMarkup(rows)
+
+
+# --- Recipe import --------------------------------------------------------------------
+
+IMPORT_CALLBACK_PREFIX = "imp:"
+PREVIEW_INGREDIENTS = 8
+
+
+def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> str:
+    facts = [escape(draft.site)]
+    if draft.total_minutes:
+        facts.append(f"⏱ {draft.total_minutes} Min")
+    if draft.servings:
+        facts.append(f"🍽 {escape(draft.servings)}")
+
+    shown = ", ".join(escape(i) for i in draft.ingredients[:PREVIEW_INGREDIENTS])
+    more = len(draft.ingredients) - PREVIEW_INGREDIENTS
+    if more > 0:
+        shown += f" und {more} weitere"
+
+    lines = [
+        f"📖 <b>{escape(draft.name)}</b>",
+        " · ".join(facts),
+        "",
+        f"<b>Tags:</b> {escape(', '.join(draft.tags)) if draft.tags else 'keine passenden gefunden'}",
+        f"<b>Zutaten ({len(draft.ingredients)}):</b> {shown}",
+        "<b>Zubereitung:</b> " + (f"{len(draft.steps)} Schritte" if draft.steps else "nicht gefunden"),
+    ]
+    if draft.source == "text":
+        lines += ["", "<i>Aus dem Seitentext gelesen, bitte kurz prüfen.</i>"]
+    if similar:
+        lines += ["", f"⚠️ Ein Rezept mit diesem Namen gibt es schon: {recipe_link(similar)}"]
+    lines += ["", "Soll ich das Rezept in Notion anlegen?"]
+    return "\n".join(lines)
+
+
+def import_keyboard(draft_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("💾 Speichern", callback_data=f"{IMPORT_CALLBACK_PREFIX}save:{draft_id}"),
+        InlineKeyboardButton("✖️ Verwerfen", callback_data=f"{IMPORT_CALLBACK_PREFIX}drop:{draft_id}"),
+    ]])

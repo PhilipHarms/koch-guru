@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from notion_client import AsyncClient
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -16,7 +17,7 @@ from telegram.ext import (
 )
 
 from koch_guru.bot import handlers
-from koch_guru.bot.render import WEEK_CALLBACK_PREFIX
+from koch_guru.bot.render import IMPORT_CALLBACK_PREFIX, WEEK_CALLBACK_PREFIX
 from koch_guru.config import Settings, load_settings
 from koch_guru.llm import LLMClient
 from koch_guru.notion_repo import RecipeRepository
@@ -42,6 +43,7 @@ def build_application(settings: Settings) -> Application:
         cache_seconds=settings.recipe_cache_seconds,
     )
     llm = LLMClient.for_openrouter(settings.openrouter_api_key, settings.model)
+    http = httpx.AsyncClient(follow_redirects=True, timeout=20)
 
     async def post_init(app: Application) -> None:
         await repo.connect()
@@ -51,6 +53,7 @@ def build_application(settings: Settings) -> Application:
     async def post_shutdown(app: Application) -> None:
         await notion.aclose()
         await llm.close()
+        await http.aclose()
 
     app = (
         ApplicationBuilder()
@@ -60,7 +63,7 @@ def build_application(settings: Settings) -> Application:
         .build()
     )
     app.bot_data["services"] = handlers.Services(
-        repo=repo, llm=llm, allowed_user_ids=settings.allowed_user_ids
+        repo=repo, llm=llm, allowed_user_ids=settings.allowed_user_ids, http=http
     )
     register_handlers(app, settings.allowed_user_ids)
     return app
@@ -84,6 +87,9 @@ def register_handlers(app: Application, allowed_user_ids: frozenset[int]) -> Non
     app.add_handler(CommandHandler("neu", handlers.reset_conversation, filters=allowed))
     # Callback queries are checked against the allowlist inside the handler.
     app.add_handler(CallbackQueryHandler(handlers.toggle_week, pattern=f"^{WEEK_CALLBACK_PREFIX}"))
+    app.add_handler(CallbackQueryHandler(handlers.import_decision, pattern=f"^{IMPORT_CALLBACK_PREFIX}"))
+    url = filters.Regex(r"https?://")
+    app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND & url, handlers.import_link))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, handlers.suggest))
     app.add_handler(MessageHandler(allowed, handlers.unsupported))
     app.add_handler(

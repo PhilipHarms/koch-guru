@@ -6,7 +6,8 @@ import httpx
 from notion_client import AsyncClient
 
 from koch_guru.config import PropertyNames
-from koch_guru.notion_repo import PropertyMapping, RecipeRepository, page_to_recipe, resolve_mapping
+from koch_guru.notion_repo import RecipeRepository, draft_blocks, page_to_recipe, resolve_mapping
+from koch_guru.services.importer import RecipeDraft
 
 DB_ID = "0123456789abcdef0123456789abcdef"
 DB_UUID = "01234567-89ab-cdef-0123-456789abcdef"
@@ -19,7 +20,7 @@ SCHEMA = {
     "Ingredients": {"type": "relation", "relation": {"data_source_id": ING_DS, "database_id": "ing-db"}},
     "Link": {"type": "url"},
     "Origin": {"type": "multi_select"},
-    "Tags": {"type": "multi_select"},
+    "Tags": {"type": "multi_select", "multi_select": {"options": [{"name": "Veggie"}, {"name": "Winter"}]}},
     "This Week?": {"type": "checkbox"},
 }
 INGREDIENTS = {"ing-1": "Gelbe Linsen", "ing-2": "Kurkuma", "ing-3": "Süßkartoffel"}
@@ -54,6 +55,7 @@ def test_mapping_for_philips_schema():
     assert (m.title, m.link, m.tags, m.origin, m.this_week) == ("Name", "Link", "Tags", "Origin", "This Week?")
     assert (m.ingredients, m.ingredients_kind) == ("Ingredients", "relation")
     assert m.ingredients_source == {"data_source_id": ING_DS, "database_id": "ing-db"}
+    assert (m.tags_type, m.tag_options) == ("multi_select", ("Veggie", "Winter"))
 
 
 def test_mapping_with_text_ingredients_and_fallback_url():
@@ -100,6 +102,7 @@ class FakeNotion:
         self.ingredients_shared = ingredients_shared
         self.query_calls = 0
         self.updates = []
+        self.created = []
 
     @staticmethod
     def error(status, code):
@@ -129,6 +132,9 @@ class FakeNotion:
         if path.endswith("/query"):
             self.query_calls += 1
             return self.paginate(self.pages, request)
+        if path == "/v1/pages" and request.method == "POST":
+            self.created.append(json.loads(request.content))
+            return httpx.Response(200, json=page(500, "Neues Rezept", "https://example.com/r"))
         if path.startswith("/v1/pages/") and request.method == "PATCH":
             page_id = path.rsplit("/", 1)[1]
             self.updates.append((page_id, json.loads(request.content)))
@@ -193,3 +199,58 @@ async def test_clear_this_week_unticks_only_planned_recipes():
     assert await repo.clear_this_week() == 2
     assert sorted(page_id for page_id, _ in fake.updates) == ["page-1", "page-2"]
     assert all(body["properties"]["This Week?"]["checkbox"] is False for _, body in fake.updates)
+
+
+DRAFT = RecipeDraft(
+    name="Ofen-Süßkartoffeln", url="https://example.com/r", ingredients=["500 g Süßkartoffeln", "200 g Feta"],
+    steps=["Backen."], servings="4", total_minutes=45, image="https://img.example/a.jpg", tags=["Veggie"],
+)
+
+
+async def test_create_recipe_payload():
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    recipe = await repo.create_recipe(DRAFT)
+
+    body = fake.created[0]
+    assert body["parent"] == {"type": "data_source_id", "data_source_id": DS_ID}
+    assert body["properties"]["Name"]["title"][0]["text"]["content"] == "Ofen-Süßkartoffeln"
+    assert body["properties"]["Link"] == {"url": "https://example.com/r"}
+    assert body["properties"]["Tags"] == {"multi_select": [{"name": "Veggie"}]}
+    assert "This Week?" not in body["properties"] and "Ingredients" not in body["properties"]
+    assert body["cover"] == {"type": "external", "external": {"url": "https://img.example/a.jpg"}}
+    kinds = [b["type"] for b in body["children"]]
+    assert kinds == ["paragraph", "heading_2", "bulleted_list_item", "bulleted_list_item",
+                     "heading_2", "numbered_list_item"]
+    info = body["children"][0]["paragraph"]["rich_text"]
+    assert info[0]["text"]["content"] == "⏱ 45 Min · 🍽 4 · Quelle: "
+    assert info[1]["text"] == {"content": "example.com", "link": {"url": "https://example.com/r"}}
+
+    assert recipe.name == "Neues Rezept"
+    await repo.list_recipes()
+    assert fake.query_calls == 2  # cache invalidated after creating
+
+
+def test_draft_blocks_respect_notion_limits():
+    long = RecipeDraft(name="X", url="https://x.de", ingredients=[f"Zutat {i}" for i in range(80)],
+                       steps=["s" * 5000] * 40)
+    blocks = draft_blocks(long)
+    assert len(blocks) == 100
+    assert "Gekürzt" in blocks[-1]["paragraph"]["rich_text"][0]["text"]["content"]
+    step = next(b for b in blocks if b["type"] == "numbered_list_item")
+    assert len(step["numbered_list_item"]["rich_text"][0]["text"]["content"]) == 2000
+
+
+async def test_find_existing_by_link_then_by_name():
+    fake = FakeNotion(total=3)
+    fake.pages[1]["properties"]["Link"]["url"] = "https://www.example.com/r/"
+    repo = make_repo(fake)
+    existing, reason = await repo.find_existing(DRAFT)
+    assert (existing.name, reason) == ("Rezept 001", "link")
+
+    same_name = RecipeDraft(name="rezept 002", url="https://other.de/x", ingredients=["a"])
+    existing, reason = await repo.find_existing(same_name)
+    assert (existing.name, reason) == ("Rezept 002", "name")
+
+    assert await repo.find_existing(RecipeDraft(name="Neu", url="https://n.de", ingredients=["a"])) == (None, "")

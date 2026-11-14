@@ -18,6 +18,7 @@ from notion_client.helpers import async_collect_paginated_api, extract_notion_id
 
 from koch_guru.config import PropertyNames
 from koch_guru.models import Recipe
+from koch_guru.services.importer import RecipeDraft, normalize_url
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ class PropertyMapping:
     this_week: str | None = None
     ingredients_kind: Literal["list", "relation"] | None = None
     ingredients_source: dict[str, str] | None = None  # data_source_id / database_id of the relation
+    tags_type: str | None = None  # multi_select, select or rich_text
+    tag_options: tuple[str, ...] = ()
 
 
 def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) -> PropertyMapping:
@@ -66,15 +69,23 @@ def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) ->
         if source:
             ingredients, kind = wanted.ingredients, "relation"
 
+    tags = wanted.tags if types.get(wanted.tags) in LIST_TYPES else None
+    tags_type = types.get(tags) if tags else None
+    options: list[dict[str, Any]] = []
+    if tags_type in ("multi_select", "select"):
+        options = (schema[tags].get(tags_type) or {}).get("options") or []
+
     return PropertyMapping(
         title=title,
         link=link,
-        tags=wanted.tags if types.get(wanted.tags) in LIST_TYPES else None,
+        tags=tags,
         ingredients=ingredients,
         origin=wanted.origin if types.get(wanted.origin) in LIST_TYPES else None,
         this_week=wanted.this_week if types.get(wanted.this_week) == "checkbox" else None,
         ingredients_kind=kind,
         ingredients_source=source,
+        tags_type=tags_type,
+        tag_options=tuple(o["name"] for o in options if o.get("name")),
     )
 
 
@@ -274,6 +285,39 @@ class RecipeRepository:
             await self.set_this_week(recipe.id, False)
         return len(planned)
 
+    @property
+    def tag_options(self) -> list[str]:
+        return list(self._mapping.tag_options) if self._mapping else []
+
+    async def find_existing(self, draft: RecipeDraft) -> tuple[Recipe | None, str]:
+        """An existing recipe with the same link ("link") or the same name ("name")."""
+        target = normalize_url(draft.url)
+        name = draft.name.casefold()
+        recipes = await self.list_recipes()
+        for recipe in recipes:
+            if recipe.url and normalize_url(recipe.url) == target:
+                return recipe, "link"
+        for recipe in recipes:
+            if recipe.name.casefold() == name:
+                return recipe, "name"
+        return None, ""
+
+    async def create_recipe(self, draft: RecipeDraft) -> Recipe:
+        if self._mapping is None:
+            await self.connect()
+        assert self._data_source_id and self._mapping
+        kwargs: dict[str, Any] = {
+            "parent": {"type": "data_source_id", "data_source_id": self._data_source_id},
+            "properties": draft_properties(draft, self._mapping),
+            "children": draft_blocks(draft),
+        }
+        if draft.image:
+            kwargs["cover"] = {"type": "external", "external": {"url": draft.image}}
+        page = await self._client.pages.create(**kwargs)
+        self._cache = None  # reload on next access so the new recipe shows up
+        recipe = page_to_recipe(page, self._mapping)
+        return recipe or Recipe(id=page["id"], name=draft.name, notion_url=page.get("url", ""), url=draft.url)
+
     def _update_cached(self, page_id: str, value: bool) -> None:
         if self._cache is None:
             return
@@ -281,3 +325,53 @@ class RecipeRepository:
         self._cache = [
             dataclasses.replace(r, this_week=value) if r.short_id == wanted else r for r in self._cache
         ]
+
+
+# --- Creating recipes ----------------------------------------------------------------
+
+MAX_BLOCKS = 100
+MAX_TEXT = 2000
+
+
+def _text(content: str, link: str | None = None) -> dict[str, Any]:
+    text: dict[str, Any] = {"content": content[:MAX_TEXT]}
+    if link:
+        text["link"] = {"url": link}
+    return {"type": "text", "text": text}
+
+
+def _block(kind: str, *rich_text: dict[str, Any]) -> dict[str, Any]:
+    return {"object": "block", "type": kind, kind: {"rich_text": list(rich_text)}}
+
+
+def draft_blocks(draft: RecipeDraft) -> list[dict[str, Any]]:
+    """Page content: short info line, ingredients, steps. Capped at Notion's 100 blocks."""
+    info = []
+    if draft.total_minutes:
+        info.append(f"⏱ {draft.total_minutes} Min")
+    if draft.servings:
+        info.append(f"🍽 {draft.servings}")
+    blocks = [_block("paragraph", _text(" · ".join(info + ["Quelle: "])), _text(draft.site, draft.url))]
+    blocks.append(_block("heading_2", _text("Zutaten")))
+    blocks += [_block("bulleted_list_item", _text(i)) for i in draft.ingredients]
+    if draft.steps:
+        blocks.append(_block("heading_2", _text("Zubereitung")))
+        blocks += [_block("numbered_list_item", _text(s)) for s in draft.steps]
+    if len(blocks) > MAX_BLOCKS:
+        blocks = blocks[: MAX_BLOCKS - 1]
+        blocks.append(_block("paragraph", _text("Gekürzt, der Rest steht in der Quelle.", draft.url)))
+    return blocks
+
+
+def draft_properties(draft: RecipeDraft, mapping: PropertyMapping) -> dict[str, Any]:
+    props: dict[str, Any] = {mapping.title: {"title": [_text(draft.name)]}}
+    if mapping.link:
+        props[mapping.link] = {"url": draft.url}
+    if mapping.tags and draft.tags:
+        if mapping.tags_type == "multi_select":
+            props[mapping.tags] = {"multi_select": [{"name": t} for t in draft.tags]}
+        elif mapping.tags_type == "select":
+            props[mapping.tags] = {"select": {"name": draft.tags[0]}}
+        else:
+            props[mapping.tags] = {"rich_text": [_text(", ".join(draft.tags))]}
+    return props
