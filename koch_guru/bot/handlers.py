@@ -6,7 +6,7 @@ import logging
 import random
 from dataclasses import dataclass
 
-import anthropic
+import openai
 from notion_client import APIResponseError
 from telegram import LinkPreviewOptions, Update
 from telegram.constants import ChatAction, ParseMode
@@ -96,16 +96,23 @@ async def not_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+def error_text(error: BaseException | None) -> str:
+    """User-facing message. Only allowed users see it, so it may hint at the cause."""
+    if isinstance(error, APIResponseError):
+        return "Notion hat gerade einen Fehler gemeldet. Versuch es gleich nochmal."
+    if isinstance(error, openai.AuthenticationError):
+        return "OpenRouter lehnt den API-Key ab. Bitte OPENROUTER_API_KEY prüfen."
+    if isinstance(error, openai.APIStatusError) and error.status_code == 402:
+        return "Das OpenRouter-Guthaben ist aufgebraucht."
+    if isinstance(error, openai.APIError):
+        return "Die KI ist gerade nicht erreichbar. Versuch es gleich nochmal."
+    return "Da ist leider etwas schiefgegangen. Versuch es gleich nochmal."
+
+
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     error = context.error
     log.error("Fehler bei der Verarbeitung eines Updates", exc_info=error)
-
-    if isinstance(error, APIResponseError):
-        text = "Notion hat gerade einen Fehler gemeldet. Versuch es gleich nochmal."
-    elif isinstance(error, anthropic.APIError):
-        text = "Claude ist gerade nicht erreichbar. Versuch es gleich nochmal."
-    else:
-        text = "Da ist leider etwas schiefgegangen. Versuch es gleich nochmal."
+    text = error_text(error)
 
     if isinstance(update, Update) and update.effective_message:
         try:

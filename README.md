@@ -1,6 +1,6 @@
 # 🧠 KochGuru
 
-KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdatenbank vorschlägt. Die Auswahl trifft Claude, aber ausschließlich aus den Rezepten in Notion.
+KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdatenbank vorschlägt. Die Auswahl trifft Claude (über OpenRouter), aber ausschließlich aus den Rezepten in Notion.
 
 ## Was der Bot kann
 
@@ -19,7 +19,7 @@ koch_guru/
   config.py                 Umgebungsvariablen lesen und prüfen
   models.py                 Recipe-Datenklasse
   notion_repo.py            Notion-Zugriff: Datenquelle, Property-Mapping, Pagination, Cache
-  llm.py                    Claude-Client mit Structured Output
+  llm.py                    OpenRouter-Client mit Structured Output
   services/recommend.py     Prompt, Auswahl und Validierung der Empfehlungen
   bot/app.py                Telegram-Anwendung, Zugriffsschutz, Fehlerbehandlung
   bot/handlers.py           Befehle und Nachrichten
@@ -36,10 +36,9 @@ Grundprinzip: Claude liefert nur Nummern aus der Rezeptliste plus Begründung. D
 | `TELEGRAM_TOKEN` | ja | Bot-Token von BotFather |
 | `NOTION_TOKEN` | ja | Token der Notion-Integration mit Zugriff auf die Rezeptdatenbank |
 | `NOTION_DATABASE_ID` | ja | ID (oder URL) der Rezeptdatenbank |
-| `ANTHROPIC_API_KEY` | ja | API-Key für Claude |
+| `OPENROUTER_API_KEY` | ja | API-Key von OpenRouter |
 | `ALLOWED_USER_IDS` | empfohlen | Komma-getrennte Telegram-User-IDs, die den Bot nutzen dürfen. Leer: Der Bot antwortet allen nur mit ihrer eigenen ID. |
-| `ANTHROPIC_MODEL` | nein | Standard `claude-sonnet-5-5` |
-| `ANTHROPIC_EFFORT` | nein | `low`, `medium` (Standard), `high`, `xhigh`, `max` |
+| `OPENROUTER_MODEL` | nein | Modell-Slug bei OpenRouter, Standard `anthropic/claude-sonnet-5.5` |
 | `RECIPE_CACHE_SECONDS` | nein | Standard 300 |
 | `NOTION_PROP_LINK`, `NOTION_PROP_TAGS`, `NOTION_PROP_INGREDIENTS` | nein | Property-Namen, Standard `Link`, `Tags`, `Zutaten` |
 
@@ -62,7 +61,6 @@ Wichtig: Läuft der Bot gleichzeitig auf Railway, verteilt Telegram die Nachrich
 
 ## Deployment auf Railway
 
-Railway baut aus `requirements.txt` und startet `python main.py`. Die Python-Version steht in `.python-version`. Nach dem Umstieg auf Claude:
+Railway baut aus `requirements.txt` und startet `python main.py`. Die Python-Version steht in `.python-version`. Benötigte Variablen: `TELEGRAM_TOKEN`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `OPENROUTER_API_KEY` und `ALLOWED_USER_IDS`.
 
-1. `ANTHROPIC_API_KEY` und `ALLOWED_USER_IDS` als Variablen ergänzen
-2. `OPENAI_API_KEY` kann entfernt werden
+Im OpenRouter-Dashboard erscheinen die Anfragen unter dem App-Namen „KochGuru“.

@@ -11,9 +11,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-DEFAULT_MODEL = "claude-sonnet-5-5"
-DEFAULT_EFFORT = "medium"
-VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"  # OpenRouter model slug
 
 
 class ConfigError(RuntimeError):
@@ -34,9 +32,8 @@ class Settings:
     telegram_token: str
     notion_token: str
     notion_database_id: str
-    anthropic_api_key: str
-    anthropic_model: str = DEFAULT_MODEL
-    anthropic_effort: str = DEFAULT_EFFORT
+    openrouter_api_key: str
+    model: str = DEFAULT_MODEL
     allowed_user_ids: frozenset[int] = frozenset()
     properties: PropertyNames = PropertyNames()
     recipe_cache_seconds: int = 300
@@ -66,16 +63,13 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     def get(name: str, default: str = "") -> str:
         return env.get(name, default).strip()
 
-    required = ["TELEGRAM_TOKEN", "NOTION_TOKEN", "NOTION_DATABASE_ID", "ANTHROPIC_API_KEY"]
+    required = ["TELEGRAM_TOKEN", "NOTION_TOKEN", "NOTION_DATABASE_ID", "OPENROUTER_API_KEY"]
     missing = [name for name in required if not get(name)]
     if missing:
-        raise ConfigError("Fehlende Umgebungsvariablen: " + ", ".join(missing))
-
-    effort = get("ANTHROPIC_EFFORT", DEFAULT_EFFORT).lower()
-    if effort not in VALID_EFFORTS:
-        raise ConfigError(
-            f"ANTHROPIC_EFFORT muss einer von {sorted(VALID_EFFORTS)} sein, nicht {effort!r}"
-        )
+        message = "Fehlende Umgebungsvariablen: " + ", ".join(missing)
+        if "OPENROUTER_API_KEY" in missing and get("ANTHROPIC_API_KEY"):
+            message += " (ANTHROPIC_API_KEY ist gesetzt: bitte in OPENROUTER_API_KEY umbenennen)"
+        raise ConfigError(message)
 
     try:
         cache_seconds = int(get("RECIPE_CACHE_SECONDS", "300"))
@@ -87,9 +81,8 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         telegram_token=get("TELEGRAM_TOKEN"),
         notion_token=get("NOTION_TOKEN"),
         notion_database_id=get("NOTION_DATABASE_ID"),
-        anthropic_api_key=get("ANTHROPIC_API_KEY"),
-        anthropic_model=get("ANTHROPIC_MODEL", DEFAULT_MODEL),
-        anthropic_effort=effort,
+        openrouter_api_key=get("OPENROUTER_API_KEY"),
+        model=get("OPENROUTER_MODEL", DEFAULT_MODEL),
         allowed_user_ids=_parse_user_ids(get("ALLOWED_USER_IDS")),
         properties=PropertyNames(
             link=get("NOTION_PROP_LINK", defaults.link),

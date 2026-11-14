@@ -1,40 +1,58 @@
-"""LLMClient against the real Anthropic SDK with a mocked HTTP transport."""
+"""LLMClient against the real openai SDK with a mocked OpenRouter endpoint."""
 
 import json
 
-import httpx2  # the Anthropic SDK uses httpx2, not httpx
-from anthropic import AsyncAnthropic
+import httpx2  # the openai SDK uses httpx2, not httpx
+from openai import AsyncOpenAI
 
-from koch_guru.llm import LLMClient
+from koch_guru.llm import OPENROUTER_BASE_URL, LLMClient
 from koch_guru.services.recommend import Selection
+
+
+def make_client(handler):
+    sdk = AsyncOpenAI(
+        api_key="sk-or-test",
+        base_url=OPENROUTER_BASE_URL,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return LLMClient(sdk, model="anthropic/claude-sonnet-5.5")
+
+
+def completion(content):
+    return {
+        "id": "gen-1", "object": "chat.completion", "created": 0, "model": "anthropic/claude-sonnet-5.5",
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+    }
 
 
 async def test_structured_request_and_parsing():
     captured = {}
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        captured["path"] = request.url.path
+    def handler(request):
+        captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("authorization")
         captured["body"] = json.loads(request.content)
         answer = {"antwort": "Passt!", "rezepte": [{"nr": 2, "grund": "schnell"}]}
-        return httpx2.Response(200, json={
-            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5",
-            "content": [{"type": "text", "text": json.dumps(answer)}],
-            "stop_reason": "end_turn", "stop_sequence": None,
-            "usage": {"input_tokens": 10, "output_tokens": 10},
-        })
+        return httpx2.Response(200, json=completion(json.dumps(answer)))
 
-    sdk = AsyncAnthropic(api_key="test", http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
-    llm = LLMClient(sdk, model="claude-sonnet-5-5", effort="medium")
-
-    result = await llm.structured(system="sys", user="hallo", output_type=Selection)
+    result = await make_client(handler).structured(system="sys", user="hallo", output_type=Selection)
 
     assert result.rezepte[0].nr == 2
     body = captured["body"]
-    assert captured["path"] == "/v1/messages"
-    assert body["model"] == "claude-sonnet-5-5"
-    assert body["system"] == "sys"
-    assert body["output_config"]["effort"] == "medium"
-    fmt = body["output_config"]["format"]
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["auth"] == "Bearer sk-or-test"
+    assert body["model"] == "anthropic/claude-sonnet-5.5"
+    assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "hallo"}]
+    assert body["provider"] == {"require_parameters": True}
+    fmt = body["response_format"]
     assert fmt["type"] == "json_schema"
-    assert fmt["schema"]["additionalProperties"] is False
-    assert set(fmt["schema"]["required"]) == {"antwort", "rezepte"}
+    assert fmt["json_schema"]["strict"] is True
+    assert set(fmt["json_schema"]["schema"]["required"]) == {"antwort", "rezepte"}
+
+
+def test_openrouter_client_defaults():
+    llm = LLMClient.for_openrouter("sk-or-x", "anthropic/claude-sonnet-5.5")
+    assert str(llm._client.base_url).rstrip("/") == OPENROUTER_BASE_URL
+    assert llm._client.default_headers["X-Title"] == "KochGuru"
