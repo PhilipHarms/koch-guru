@@ -10,10 +10,12 @@ KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdaten
 - Wochenliste: 📅 unter einem Vorschlag setzt die Checkbox „This Week?“ in Notion, ✅ nimmt sie wieder raus
 - `/woche`: Wochenliste anzeigen, `/woche_leeren`: alle Häkchen entfernen
 - Rezepte per Link anlegen: Link schicken, Vorschau prüfen, „Speichern“ legt die Seite in Notion an (Name, Link, passende Tags aus den bestehenden, Titelbild, Zutaten und Zubereitung im Seiteninhalt). Ist der Link schon in der Sammlung, sagt der Bot das. Seiten, die ihren Inhalt erst per JavaScript laden (Instagram, TikTok), kann er nicht lesen.
+- Rezepte per Foto anlegen: Foto einer Kochbuchseite, eines Zeitschriftenrezepts oder Screenshots schicken, gern mehrere Fotos als Album. Claude liest das Rezept ab, wählt Tags und, wenn erkennbar, das Kochbuch aus den bestehenden „Origin“-Einträgen. Die Originalfotos werden an die Notion-Seite gehängt.
+- Importierte Rezepte bekommen ein passendes Emoji als Icon.
 - `/zufall`: vier zufällige Rezepte
 - `/aktualisieren`: Rezepte sofort neu aus Notion laden (sonst alle 5 Minuten automatisch)
 
-Geplant: Zutaten-Verknüpfung beim Import, „Zuletzt gekocht“ und Zubereitungszeit (erst testweise für einzelne Rezepte), Rezepte per Foto anlegen.
+Geplant: Zutaten-Verknüpfung beim Import, „Zuletzt gekocht“ und Zubereitungszeit (erst testweise für einzelne Rezepte).
 
 ## Aufbau
 
@@ -26,7 +28,7 @@ koch_guru/
   llm.py                    OpenRouter-Client mit Structured Output
   services/recommend.py     Prompt, Auswahl und Validierung der Empfehlungen
   services/conversation.py  Kurzzeit-Gesprächsverlauf pro Chat (im Speicher)
-  services/importer.py      Rezept aus einer URL lesen (schema.org/JSON-LD, sonst Seitentext an das Modell)
+  services/importer.py      Rezept aus einer URL (schema.org/JSON-LD, sonst Seitentext) oder von Fotos lesen
   services/drafts.py        Import-Entwürfe bis „Speichern“ oder „Verwerfen“ (im Speicher)
   bot/app.py                Telegram-Anwendung, Zugriffsschutz, Fehlerbehandlung
   bot/handlers.py           Befehle und Nachrichten
@@ -55,7 +57,7 @@ Die Titel-Property wird automatisch erkannt. Fehlt die Link-Property unter dem e
 
 - **Zutaten:** `Ingredients` ist eine Verknüpfung zu einer eigenen Zutaten-Datenbank. Damit der Bot die Zutatennamen lesen kann, muss auch diese Datenbank mit der Integration verbunden sein (Datenbank öffnen › ••• › Connections). Ohne Zugriff lädt der Bot die Rezepte ohne Zutaten und schreibt einen Hinweis ins Log.
 - **Wochenliste:** Zum Setzen der Checkbox braucht die Integration die Berechtigung „Update content“.
-- **Link-Import:** Zum Anlegen neuer Rezepte braucht sie „Insert content“.
+- **Link- und Foto-Import:** Zum Anlegen neuer Rezepte und Hochladen der Fotos braucht sie „Insert content“.
 
 Die eigene Telegram-ID findest du, indem du dem Bot schreibst, solange `ALLOWED_USER_IDS` leer ist.
 

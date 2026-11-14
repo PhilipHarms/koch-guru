@@ -19,7 +19,7 @@ SCHEMA = {
     "Name": {"type": "title"},
     "Ingredients": {"type": "relation", "relation": {"data_source_id": ING_DS, "database_id": "ing-db"}},
     "Link": {"type": "url"},
-    "Origin": {"type": "multi_select"},
+    "Origin": {"type": "multi_select", "multi_select": {"options": [{"name": "Green Feast (Autumn Winter)"}]}},
     "Tags": {"type": "multi_select", "multi_select": {"options": [{"name": "Veggie"}, {"name": "Winter"}]}},
     "This Week?": {"type": "checkbox"},
 }
@@ -103,6 +103,10 @@ class FakeNotion:
         self.query_calls = 0
         self.updates = []
         self.created = []
+        self.reject_icons = False
+        self.reject_uploads = False
+        self.uploads = []
+        self.sent = []
 
     @staticmethod
     def error(status, code):
@@ -132,8 +136,21 @@ class FakeNotion:
         if path.endswith("/query"):
             self.query_calls += 1
             return self.paginate(self.pages, request)
+        if path == "/v1/file_uploads" and request.method == "POST":
+            if self.reject_uploads:
+                return self.error(403, "restricted_resource")
+            body = json.loads(request.content)
+            self.uploads.append(body)
+            return httpx.Response(200, json={"object": "file_upload", "id": f"fu-{len(self.uploads)}",
+                                             "status": "pending"})
+        if path.startswith("/v1/file_uploads/") and path.endswith("/send"):
+            self.sent.append((path.split("/")[3], request.headers["content-type"], request.content))
+            return httpx.Response(200, json={"object": "file_upload", "id": path.split("/")[3], "status": "uploaded"})
         if path == "/v1/pages" and request.method == "POST":
-            self.created.append(json.loads(request.content))
+            body = json.loads(request.content)
+            self.created.append(body)
+            if self.reject_icons and "icon" in body:
+                return self.error(400, "validation_error")
             return httpx.Response(200, json=page(500, "Neues Rezept", "https://example.com/r"))
         if path.startswith("/v1/pages/") and request.method == "PATCH":
             page_id = path.rsplit("/", 1)[1]
@@ -204,6 +221,7 @@ async def test_clear_this_week_unticks_only_planned_recipes():
 DRAFT = RecipeDraft(
     name="Ofen-Süßkartoffeln", url="https://example.com/r", ingredients=["500 g Süßkartoffeln", "200 g Feta"],
     steps=["Backen."], servings="4", total_minutes=45, image="https://img.example/a.jpg", tags=["Veggie"],
+    icon="🍠",
 )
 
 
@@ -220,6 +238,7 @@ async def test_create_recipe_payload():
     assert body["properties"]["Tags"] == {"multi_select": [{"name": "Veggie"}]}
     assert "This Week?" not in body["properties"] and "Ingredients" not in body["properties"]
     assert body["cover"] == {"type": "external", "external": {"url": "https://img.example/a.jpg"}}
+    assert body["icon"] == {"type": "emoji", "emoji": "🍠"}
     kinds = [b["type"] for b in body["children"]]
     assert kinds == ["paragraph", "heading_2", "bulleted_list_item", "bulleted_list_item",
                      "heading_2", "numbered_list_item"]
@@ -254,3 +273,60 @@ async def test_find_existing_by_link_then_by_name():
     assert (existing.name, reason) == ("Rezept 002", "name")
 
     assert await repo.find_existing(RecipeDraft(name="Neu", url="https://n.de", ingredients=["a"])) == (None, "")
+
+
+async def test_unknown_emoji_is_dropped_and_recipe_still_saved():
+    fake = FakeNotion(total=1)
+    fake.reject_icons = True
+    recipe = await make_repo(fake).create_recipe(DRAFT)
+    assert recipe.name == "Neues Rezept"
+    assert ["icon" in body for body in fake.created] == [True, False]
+
+
+PHOTO_DRAFT = RecipeDraft(
+    name="Kürbis-Dal", ingredients=["1 Kürbis"], steps=["Kochen."], tags=["Veggie"], icon="🍛",
+    origin=["Green Feast (Autumn Winter)"], photos=[(b"jpeg-bytes", "image/jpeg"), (b"png-bytes", "image/png")],
+    source="photo",
+)
+
+
+async def test_create_recipe_from_photo_uploads_originals():
+    fake = FakeNotion(total=1)
+    await make_repo(fake).create_recipe(PHOTO_DRAFT)
+
+    assert [u["filename"] for u in fake.uploads] == ["rezept-1.jpg", "rezept-2.png"]
+    assert all(u["mode"] == "single_part" for u in fake.uploads)
+    assert [s[0] for s in fake.sent] == ["fu-1", "fu-2"]
+    assert fake.sent[0][1].startswith("multipart/form-data") and b"jpeg-bytes" in fake.sent[0][2]
+
+    body = fake.created[0]
+    assert "Link" not in body["properties"]
+    assert body["properties"]["Origin"] == {"multi_select": [{"name": "Green Feast (Autumn Winter)"}]}
+    assert "cover" not in body
+    info = body["children"][0]["paragraph"]["rich_text"]
+    assert [t["text"]["content"] for t in info] == ["Quelle: Green Feast (Autumn Winter)"]
+    assert [b["type"] for b in body["children"][-3:]] == ["heading_2", "image", "image"]
+    assert body["children"][-1]["image"] == {"type": "file_upload", "file_upload": {"id": "fu-2"}}
+
+
+async def test_failed_photo_upload_still_saves_recipe():
+    fake = FakeNotion(total=1)
+    fake.reject_uploads = True
+    await make_repo(fake).create_recipe(PHOTO_DRAFT)
+    assert fake.created and all(b["type"] != "image" for b in fake.created[0]["children"])
+
+
+def test_photos_keep_their_place_when_content_is_long():
+    long = RecipeDraft(name="X", ingredients=[f"Zutat {i}" for i in range(120)], source="photo")
+    blocks = draft_blocks(long, ["fu-1", "fu-2"])
+    assert len(blocks) == 100
+    assert [b["type"] for b in blocks[-4:]] == ["paragraph", "heading_2", "image", "image"]
+    assert "auf dem Foto" in blocks[-4]["paragraph"]["rich_text"][0]["text"]["content"]
+
+
+async def test_find_existing_without_url_matches_by_name_only():
+    fake = FakeNotion(total=3)
+    repo = make_repo(fake)
+    assert (await repo.find_existing(RecipeDraft(name="Rezept 001", ingredients=["a"])))[1] == "name"
+    assert await repo.find_existing(RecipeDraft(name="Neu", ingredients=["a"])) == (None, "")
+    assert repo.origin_options == ["Green Feast (Autumn Winter)"]

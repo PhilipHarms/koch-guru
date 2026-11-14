@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from telegram import CallbackQuery, Chat, Message, MessageEntity, Update, User
+from telegram import CallbackQuery, Chat, Message, MessageEntity, PhotoSize, Update, User
 from telegram.constants import ParseMode
 
 from koch_guru.bot import handlers
@@ -37,6 +37,15 @@ def update_from(user_id, text, edited=False):
     return Update(update_id=1, edited_message=msg) if edited else Update(update_id=1, message=msg)
 
 
+def photo_from(user_id):
+    msg = Message(
+        message_id=1, date=datetime.now(timezone.utc), chat=Chat(id=user_id, type="private"),
+        from_user=User(id=user_id, first_name="T", is_bot=False),
+        photo=[PhotoSize(file_id="f", file_unique_id="u", width=1280, height=960)],
+    )
+    return Update(update_id=3, message=msg)
+
+
 def callback_from(user_id, data):
     query = CallbackQuery(id="q", from_user=User(id=user_id, first_name="T", is_bot=False),
                           chat_instance="c", data=data)
@@ -58,6 +67,8 @@ def test_routing_and_access_control():
     assert matching_callbacks(app, update_from(PHILIP, "das hier https://x.de/r"))[0] is handlers.import_link
     assert matching_callbacks(app, callback_from(PHILIP, "imp:save:abc")) == [handlers.import_decision]
     assert matching_callbacks(app, update_from(STRANGER, "https://x.de/r")) == [handlers.not_allowed]
+    assert matching_callbacks(app, photo_from(PHILIP))[0] is handlers.photo_import
+    assert matching_callbacks(app, photo_from(STRANGER)) == [handlers.not_allowed]
     assert matching_callbacks(app, update_from(PHILIP, "/zufall"))[0] is handlers.random_recipes
     assert matching_callbacks(app, update_from(PHILIP, "/woche"))[0] is handlers.week
     assert matching_callbacks(app, update_from(PHILIP, "/woche_leeren"))[0] is handlers.week_clear
@@ -83,6 +94,7 @@ SPAETZLE = Recipe(id="bbbb-2", name="Käse & Spätzle", notion_url="https://www.
 class FakeRepo:
     supports_this_week = True
     tag_options = ["Veggie", "Winter"]
+    origin_options = ["Green Feast (Autumn Winter)"]
 
     def __init__(self, existing=(None, "")):
         self.updates = []
@@ -244,7 +256,8 @@ def test_error_texts_point_to_the_cause():
 
 
 DRAFT = RecipeDraft(name="Ofen-Süßkartoffeln <mit> Feta", url="https://example.com/r",
-                    ingredients=["500 g Süßkartoffeln", "200 g Feta"], steps=["Backen."], tags=["Veggie"])
+                    ingredients=["500 g Süßkartoffeln", "200 g Feta"], steps=["Backen."], tags=["Veggie"],
+                    icon="🍠")
 
 
 def import_services(monkeypatch, repo, result=DRAFT):
@@ -272,7 +285,7 @@ async def test_link_preview_then_save(monkeypatch):
     await handlers.import_link(update, fake_context(svc))
 
     preview = message.reply_text.call_args.args[0]
-    assert "<b>Ofen-Süßkartoffeln &lt;mit&gt; Feta</b>" in preview
+    assert preview.startswith("🍠 <b>Ofen-Süßkartoffeln &lt;mit&gt; Feta</b>")
     assert "<b>Tags:</b> Veggie" in preview and "Soll ich das Rezept in Notion anlegen?" in preview
     buttons = [b for row in message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard for b in row]
     save, drop = (b.callback_data for b in buttons)
@@ -337,3 +350,83 @@ async def test_import_buttons_reject_strangers(monkeypatch):
     update, query = import_callback(STRANGER, "imp:save:abc", "")
     await handlers.import_decision(update, fake_context(svc))
     assert repo.created == [] and "privat" in query.answer.call_args.args[0]
+
+
+# --- Photos ----------------------------------------------------------------------------
+
+def fake_photo_message(data=b"jpeg", caption=None, media_group_id=None, document=None):
+    file = SimpleNamespace(download_as_bytearray=AsyncMock(return_value=bytearray(data)))
+    photo = [SimpleNamespace(get_file=AsyncMock())] if document is None else []
+    if photo:
+        photo[0].get_file.return_value = file
+    if document is not None:
+        document.get_file = AsyncMock(return_value=file)
+    return SimpleNamespace(
+        photo=photo, document=document, caption=caption, media_group_id=media_group_id,
+        reply_text=AsyncMock(), chat=SimpleNamespace(send_action=AsyncMock()),
+    )
+
+
+def photo_update(message):
+    return SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=PHILIP),
+                           effective_chat=SimpleNamespace(id=PHILIP), callback_query=None)
+
+
+PHOTO_DRAFT = RecipeDraft(name="Kürbis-Dal", ingredients=["1 Kürbis"], tags=["Veggie"], icon="🍛",
+                          origin=["Green Feast (Autumn Winter)"], source="photo")
+
+
+def photo_services(monkeypatch, repo, result=PHOTO_DRAFT):
+    calls = []
+
+    async def fake_import(photos, caption, llm, tag_options, origin_options):
+        calls.append((photos, caption, origin_options))
+        if isinstance(result, Exception):
+            raise result
+        return result
+    monkeypatch.setattr(handlers, "import_from_photos", fake_import)
+    svc = handlers.Services(repo=repo, llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+    return svc, calls
+
+
+async def test_photo_shows_preview_and_saves(monkeypatch):
+    repo = FakeRepo()
+    svc, calls = photo_services(monkeypatch, repo)
+    message = fake_photo_message(caption="aus Green Feast")
+    await handlers.photo_import(photo_update(message), fake_context(svc))
+
+    assert calls == [([(b"jpeg", "image/jpeg")], "aus Green Feast", ["Green Feast (Autumn Winter)"])]
+    preview = message.reply_text.call_args.args[0]
+    assert preview.startswith("🍛 <b>Kürbis-Dal</b>\n📷 Foto · 📚 Green Feast (Autumn Winter)")
+    assert "Vom Foto gelesen" in preview
+    save = message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+    update, query = import_callback(PHILIP, save, preview)
+    await handlers.import_decision(update, fake_context(svc))
+    assert repo.created == [PHOTO_DRAFT]
+
+
+async def test_album_is_read_as_one_recipe(monkeypatch):
+    monkeypatch.setattr(handlers, "ALBUM_WAIT_SECONDS", 0.05)
+    svc, calls = photo_services(monkeypatch, FakeRepo())
+    first = fake_photo_message(b"seite-1", caption="Green Feast", media_group_id="g1")
+    second = fake_photo_message(b"seite-2", media_group_id="g1")
+
+    import asyncio
+    task = asyncio.create_task(handlers.photo_import(photo_update(first), fake_context(svc)))
+    await asyncio.sleep(0.01)
+    await handlers.photo_import(photo_update(second), fake_context(svc))
+    await task
+
+    assert len(calls) == 1
+    assert [p[0] for p in calls[0][0]] == [b"seite-1", b"seite-2"]
+    assert calls[0][1] == "Green Feast"
+    assert first.reply_text.await_count == 1 and second.reply_text.await_count == 0
+    assert svc.albums == {}
+
+
+async def test_image_document_is_accepted_and_errors_are_explained(monkeypatch):
+    svc, calls = photo_services(monkeypatch, FakeRepo(), result=RecipeImportError("Auf dem Foto habe ich kein Rezept erkannt."))
+    message = fake_photo_message(b"png", document=SimpleNamespace(mime_type="image/png"))
+    await handlers.photo_import(photo_update(message), fake_context(svc))
+    assert calls[0][0] == [(b"png", "image/png")]
+    assert "kein Rezept erkannt" in message.reply_text.call_args.args[0]

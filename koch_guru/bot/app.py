@@ -91,6 +91,9 @@ def register_handlers(app: Application, allowed_user_ids: frozenset[int]) -> Non
     url = filters.Regex(r"https?://")
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND & url, handlers.import_link))
     app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, handlers.suggest))
+    # Non-blocking, so the other photos of an album arrive while the first one waits for them.
+    photos = filters.PHOTO | filters.Document.IMAGE
+    app.add_handler(MessageHandler(allowed & photos, handlers.photo_import, block=False))
     app.add_handler(MessageHandler(allowed, handlers.unsupported))
     app.add_handler(
         MessageHandler(filters.UpdateType.MESSAGE & ~filters.User(user_id=allowed_user_ids),

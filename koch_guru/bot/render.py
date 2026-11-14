@@ -81,7 +81,9 @@ PREVIEW_INGREDIENTS = 8
 
 
 def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> str:
-    facts = [escape(draft.site)]
+    facts = [escape(draft.site) if draft.url else "📷 Foto"]
+    if draft.origin:
+        facts.append(f"📚 {escape(', '.join(draft.origin))}")
     if draft.total_minutes:
         facts.append(f"⏱ {draft.total_minutes} Min")
     if draft.servings:
@@ -93,7 +95,7 @@ def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> s
         shown += f" und {more} weitere"
 
     lines = [
-        f"📖 <b>{escape(draft.name)}</b>",
+        f"{draft.icon or '📖'} <b>{escape(draft.name)}</b>",
         " · ".join(facts),
         "",
         f"<b>Tags:</b> {escape(', '.join(draft.tags)) if draft.tags else 'keine passenden gefunden'}",
@@ -102,6 +104,8 @@ def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> s
     ]
     if draft.source == "text":
         lines += ["", "<i>Aus dem Seitentext gelesen, bitte kurz prüfen.</i>"]
+    elif draft.source == "photo":
+        lines += ["", "<i>Vom Foto gelesen, bitte kurz prüfen. Das Foto hänge ich an die Notion-Seite.</i>"]
     if similar:
         lines += ["", f"⚠️ Ein Rezept mit diesem Namen gibt es schon: {recipe_link(similar)}"]
     lines += ["", "Soll ich das Rezept in Notion anlegen?"]

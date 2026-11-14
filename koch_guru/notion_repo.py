@@ -40,6 +40,8 @@ class PropertyMapping:
     ingredients_source: dict[str, str] | None = None  # data_source_id / database_id of the relation
     tags_type: str | None = None  # multi_select, select or rich_text
     tag_options: tuple[str, ...] = ()
+    origin_type: str | None = None
+    origin_options: tuple[str, ...] = ()
 
 
 def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) -> PropertyMapping:
@@ -70,23 +72,33 @@ def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) ->
             ingredients, kind = wanted.ingredients, "relation"
 
     tags = wanted.tags if types.get(wanted.tags) in LIST_TYPES else None
-    tags_type = types.get(tags) if tags else None
-    options: list[dict[str, Any]] = []
-    if tags_type in ("multi_select", "select"):
-        options = (schema[tags].get(tags_type) or {}).get("options") or []
+    origin = wanted.origin if types.get(wanted.origin) in LIST_TYPES else None
 
     return PropertyMapping(
         title=title,
         link=link,
         tags=tags,
         ingredients=ingredients,
-        origin=wanted.origin if types.get(wanted.origin) in LIST_TYPES else None,
+        origin=origin,
         this_week=wanted.this_week if types.get(wanted.this_week) == "checkbox" else None,
         ingredients_kind=kind,
         ingredients_source=source,
-        tags_type=tags_type,
-        tag_options=tuple(o["name"] for o in options if o.get("name")),
+        tags_type=types.get(tags) if tags else None,
+        tag_options=_option_names(schema, tags),
+        origin_type=types.get(origin) if origin else None,
+        origin_options=_option_names(schema, origin),
     )
+
+
+def _option_names(schema: dict[str, dict[str, Any]], prop: str | None) -> tuple[str, ...]:
+    """Existing options of a select or multi-select property."""
+    if not prop:
+        return ()
+    kind = schema[prop].get("type")
+    if kind not in ("multi_select", "select"):
+        return ()
+    options = (schema[prop].get(kind) or {}).get("options") or []
+    return tuple(o["name"] for o in options if o.get("name"))
 
 
 def _plain_text(rich_text: list[dict[str, Any]] | None) -> str:
@@ -289,14 +301,19 @@ class RecipeRepository:
     def tag_options(self) -> list[str]:
         return list(self._mapping.tag_options) if self._mapping else []
 
+    @property
+    def origin_options(self) -> list[str]:
+        return list(self._mapping.origin_options) if self._mapping else []
+
     async def find_existing(self, draft: RecipeDraft) -> tuple[Recipe | None, str]:
         """An existing recipe with the same link ("link") or the same name ("name")."""
-        target = normalize_url(draft.url)
         name = draft.name.casefold()
         recipes = await self.list_recipes()
-        for recipe in recipes:
-            if recipe.url and normalize_url(recipe.url) == target:
-                return recipe, "link"
+        if draft.url:
+            target = normalize_url(draft.url)
+            for recipe in recipes:
+                if recipe.url and normalize_url(recipe.url) == target:
+                    return recipe, "link"
         for recipe in recipes:
             if recipe.name.casefold() == name:
                 return recipe, "name"
@@ -309,14 +326,42 @@ class RecipeRepository:
         kwargs: dict[str, Any] = {
             "parent": {"type": "data_source_id", "data_source_id": self._data_source_id},
             "properties": draft_properties(draft, self._mapping),
-            "children": draft_blocks(draft),
+            "children": draft_blocks(draft, await self._upload_photos(draft)),
         }
         if draft.image:
             kwargs["cover"] = {"type": "external", "external": {"url": draft.image}}
-        page = await self._client.pages.create(**kwargs)
+        if draft.icon:
+            kwargs["icon"] = {"type": "emoji", "emoji": draft.icon}
+        try:
+            page = await self._client.pages.create(**kwargs)
+        except APIResponseError as exc:
+            # Notion rejects emojis it does not know. Save the recipe anyway, just without icon.
+            if exc.code != APIErrorCode.ValidationError or "icon" not in kwargs:
+                raise
+            log.warning("Notion hat das Icon %r abgelehnt, speichere ohne Icon.", draft.icon)
+            kwargs.pop("icon")
+            page = await self._client.pages.create(**kwargs)
         self._cache = None  # reload on next access so the new recipe shows up
         recipe = page_to_recipe(page, self._mapping)
         return recipe or Recipe(id=page["id"], name=draft.name, notion_url=page.get("url", ""), url=draft.url)
+
+    async def _upload_photos(self, draft: RecipeDraft) -> list[str]:
+        """Upload the original photos to Notion. On failure the recipe is saved without them."""
+        ids = []
+        try:
+            for nr, (data, mime) in enumerate(draft.photos, start=1):
+                filename = f"rezept-{nr}.{mime.rsplit('/', 1)[-1].replace('jpeg', 'jpg')}"
+                upload = await self._client.file_uploads.create(
+                    mode="single_part", filename=filename, content_type=mime
+                )
+                await self._client.file_uploads.send(
+                    file_upload_id=upload["id"], file=(filename, data, mime)
+                )
+                ids.append(upload["id"])
+        except APIResponseError as exc:
+            log.warning("Foto-Upload zu Notion fehlgeschlagen (%s), speichere ohne Foto.", exc.code)
+            return []
+        return ids
 
     def _update_cached(self, page_id: str, value: bool) -> None:
         if self._cache is None:
@@ -344,34 +389,53 @@ def _block(kind: str, *rich_text: dict[str, Any]) -> dict[str, Any]:
     return {"object": "block", "type": kind, kind: {"rich_text": list(rich_text)}}
 
 
-def draft_blocks(draft: RecipeDraft) -> list[dict[str, Any]]:
-    """Page content: short info line, ingredients, steps. Capped at Notion's 100 blocks."""
+def _image_block(file_upload_id: str) -> dict[str, Any]:
+    return {"object": "block", "type": "image",
+            "image": {"type": "file_upload", "file_upload": {"id": file_upload_id}}}
+
+
+def draft_blocks(draft: RecipeDraft, photo_upload_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    """Page content: info line, ingredients, steps, original photos. Capped at Notion's 100 blocks."""
     info = []
     if draft.total_minutes:
         info.append(f"⏱ {draft.total_minutes} Min")
     if draft.servings:
         info.append(f"🍽 {draft.servings}")
-    blocks = [_block("paragraph", _text(" · ".join(info + ["Quelle: "])), _text(draft.site, draft.url))]
+    if draft.url:
+        source = [_text(" · ".join(info + ["Quelle: "])), _text(draft.site, draft.url)]
+    else:
+        source = [_text(" · ".join(info + [f"Quelle: {', '.join(draft.origin) or 'Foto'}"]))]
+    blocks = [_block("paragraph", *source)]
     blocks.append(_block("heading_2", _text("Zutaten")))
     blocks += [_block("bulleted_list_item", _text(i)) for i in draft.ingredients]
     if draft.steps:
         blocks.append(_block("heading_2", _text("Zubereitung")))
         blocks += [_block("numbered_list_item", _text(s)) for s in draft.steps]
-    if len(blocks) > MAX_BLOCKS:
-        blocks = blocks[: MAX_BLOCKS - 1]
-        blocks.append(_block("paragraph", _text("Gekürzt, der Rest steht in der Quelle.", draft.url)))
-    return blocks
+
+    tail = []
+    if photo_upload_ids:
+        tail = [_block("heading_2", _text("Originalfoto"))] + [_image_block(i) for i in photo_upload_ids]
+    room = MAX_BLOCKS - len(tail)
+    if len(blocks) > room:
+        note = "Gekürzt, der Rest steht " + ("in der Quelle." if draft.url else "auf dem Foto.")
+        blocks = blocks[: room - 1] + [_block("paragraph", _text(note, draft.url or None))]
+    return blocks + tail
 
 
 def draft_properties(draft: RecipeDraft, mapping: PropertyMapping) -> dict[str, Any]:
     props: dict[str, Any] = {mapping.title: {"title": [_text(draft.name)]}}
-    if mapping.link:
+    if mapping.link and draft.url:
         props[mapping.link] = {"url": draft.url}
     if mapping.tags and draft.tags:
-        if mapping.tags_type == "multi_select":
-            props[mapping.tags] = {"multi_select": [{"name": t} for t in draft.tags]}
-        elif mapping.tags_type == "select":
-            props[mapping.tags] = {"select": {"name": draft.tags[0]}}
-        else:
-            props[mapping.tags] = {"rich_text": [_text(", ".join(draft.tags))]}
+        props[mapping.tags] = _list_property(mapping.tags_type, draft.tags)
+    if mapping.origin and draft.origin:
+        props[mapping.origin] = _list_property(mapping.origin_type, draft.origin)
     return props
+
+
+def _list_property(kind: str | None, values: list[str]) -> dict[str, Any]:
+    if kind == "multi_select":
+        return {"multi_select": [{"name": v} for v in values]}
+    if kind == "select":
+        return {"select": {"name": values[0]}}
+    return {"rich_text": [_text(", ".join(values))]}
