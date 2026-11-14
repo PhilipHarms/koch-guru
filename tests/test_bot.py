@@ -13,6 +13,7 @@ from koch_guru.bot.render import week_keyboard
 from koch_guru.config import load_settings
 from koch_guru.models import Recipe
 from koch_guru.services.conversation import ConversationStore
+from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import Pick, Selection
 
 PHILIP, STRANGER = 111, 999
@@ -54,6 +55,9 @@ def matching_callbacks(app, update):
 def test_routing_and_access_control():
     app = build_application(settings())
     assert matching_callbacks(app, update_from(PHILIP, "was vegetarisches"))[0] is handlers.suggest
+    assert matching_callbacks(app, update_from(PHILIP, "das hier https://x.de/r"))[0] is handlers.import_link
+    assert matching_callbacks(app, callback_from(PHILIP, "imp:save:abc")) == [handlers.import_decision]
+    assert matching_callbacks(app, update_from(STRANGER, "https://x.de/r")) == [handlers.not_allowed]
     assert matching_callbacks(app, update_from(PHILIP, "/zufall"))[0] is handlers.random_recipes
     assert matching_callbacks(app, update_from(PHILIP, "/woche"))[0] is handlers.week
     assert matching_callbacks(app, update_from(PHILIP, "/woche_leeren"))[0] is handlers.week_clear
@@ -78,10 +82,20 @@ SPAETZLE = Recipe(id="bbbb-2", name="Käse & Spätzle", notion_url="https://www.
 
 class FakeRepo:
     supports_this_week = True
+    tag_options = ["Veggie", "Winter"]
 
-    def __init__(self):
+    def __init__(self, existing=(None, "")):
         self.updates = []
         self.cleared = False
+        self.existing = existing
+        self.created = []
+
+    async def find_existing(self, draft):
+        return self.existing
+
+    async def create_recipe(self, draft):
+        self.created.append(draft)
+        return Recipe(id="neu-1", name=draft.name, notion_url="https://www.notion.so/neu1", url=draft.url)
 
     async def list_recipes(self, force_refresh=False):
         return [RAMEN, SPAETZLE]
@@ -227,3 +241,99 @@ def test_error_texts_point_to_the_cause():
     notion_403 = APIResponseError.__new__(APIResponseError)
     notion_403.code = "restricted_resource"
     assert "Update content" in handlers.error_text(notion_403)
+
+
+DRAFT = RecipeDraft(name="Ofen-Süßkartoffeln <mit> Feta", url="https://example.com/r",
+                    ingredients=["500 g Süßkartoffeln", "200 g Feta"], steps=["Backen."], tags=["Veggie"])
+
+
+def import_services(monkeypatch, repo, result=DRAFT):
+    async def fake_import(url, http, llm, tag_options):
+        assert tag_options == ["Veggie", "Winter"]
+        if isinstance(result, Exception):
+            raise result
+        return result
+    monkeypatch.setattr(handlers, "import_from_url", fake_import)
+    return handlers.Services(repo=repo, llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+
+
+def import_callback(user_id, data, text):
+    query = SimpleNamespace(
+        data=data, answer=AsyncMock(), edit_message_text=AsyncMock(), edit_message_reply_markup=AsyncMock(),
+        message=SimpleNamespace(text=text),
+    )
+    return SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=user_id)), query
+
+
+async def test_link_preview_then_save(monkeypatch):
+    repo = FakeRepo()
+    svc = import_services(monkeypatch, repo)
+    update, message = fake_update("Probier mal https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+
+    preview = message.reply_text.call_args.args[0]
+    assert "<b>Ofen-Süßkartoffeln &lt;mit&gt; Feta</b>" in preview
+    assert "<b>Tags:</b> Veggie" in preview and "Soll ich das Rezept in Notion anlegen?" in preview
+    buttons = [b for row in message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard for b in row]
+    save, drop = (b.callback_data for b in buttons)
+    assert save.startswith("imp:save:") and drop.startswith("imp:drop:")
+
+    update, query = import_callback(PHILIP, save, preview)
+    await handlers.import_decision(update, fake_context(svc))
+    assert repo.created == [DRAFT]
+    text = query.edit_message_text.call_args.args[0]
+    assert "In Notion angelegt" in text and "Soll ich" not in text
+    week = query.edit_message_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert week.callback_data == "cw:neu1"
+
+    # A second press finds no draft anymore.
+    update, query = import_callback(PHILIP, save, preview)
+    await handlers.import_decision(update, fake_context(svc))
+    assert len(repo.created) == 1
+    assert "abgelaufen" in query.answer.call_args.args[0]
+
+
+async def test_link_preview_then_discard(monkeypatch):
+    repo = FakeRepo()
+    svc = import_services(monkeypatch, repo)
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+    drop = message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard[0][1].callback_data
+    update, query = import_callback(PHILIP, drop, "")
+    await handlers.import_decision(update, fake_context(svc))
+    assert repo.created == []
+    assert "Verworfen" in query.edit_message_text.call_args.args[0]
+
+
+async def test_known_link_is_not_imported_again(monkeypatch):
+    known = Recipe(id="k-1", name="Kenn ich", notion_url="https://www.notion.so/k1")
+    repo = FakeRepo(existing=(known, "link"))
+    svc = import_services(monkeypatch, repo)
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+    assert "schon in deiner Sammlung" in message.reply_text.call_args.args[0]
+    assert message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "cw:k1"
+
+
+async def test_same_name_is_only_a_warning(monkeypatch):
+    similar = Recipe(id="s-1", name="Ofen-Süßkartoffeln <mit> Feta", notion_url="https://www.notion.so/s1")
+    svc = import_services(monkeypatch, FakeRepo(existing=(similar, "name")))
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+    assert "gibt es schon" in message.reply_text.call_args.args[0]
+    assert message.reply_text.call_args.kwargs["reply_markup"] is not None
+
+
+async def test_import_error_is_explained(monkeypatch):
+    svc = import_services(monkeypatch, FakeRepo(), result=RecipeImportError("Die Seite hat mit Fehler 403 geantwortet."))
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+    assert "Fehler 403" in message.reply_text.call_args.args[0]
+
+
+async def test_import_buttons_reject_strangers(monkeypatch):
+    repo = FakeRepo()
+    svc = import_services(monkeypatch, repo)
+    update, query = import_callback(STRANGER, "imp:save:abc", "")
+    await handlers.import_decision(update, fake_context(svc))
+    assert repo.created == [] and "privat" in query.answer.call_args.args[0]
