@@ -1,4 +1,4 @@
-from bot.telegram_bot import start_bot
+from koch_guru.bot.app import run
 
 if __name__ == "__main__":
-    start_bot()
+    run()

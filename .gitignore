@@ -16,3 +16,7 @@ venv/
 
 # Secrets
 .env
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
