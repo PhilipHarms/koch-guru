@@ -24,7 +24,9 @@ class PropertyNames:
 
     link: str = "Link"
     tags: str = "Tags"
-    ingredients: str = "Zutaten"
+    origin: str = "Origin"
+    ingredients: str = "Ingredients"  # text/select property or relation to an ingredients DB
+    this_week: str = "This Week?"  # checkbox
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,9 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         properties=PropertyNames(
             link=get("NOTION_PROP_LINK", defaults.link),
             tags=get("NOTION_PROP_TAGS", defaults.tags),
+            origin=get("NOTION_PROP_ORIGIN", defaults.origin),
             ingredients=get("NOTION_PROP_INGREDIENTS", defaults.ingredients),
+            this_week=get("NOTION_PROP_THIS_WEEK", defaults.this_week),
         ),
         recipe_cache_seconds=cache_seconds,
     )

@@ -4,13 +4,15 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from telegram import Chat, Message, MessageEntity, Update, User
+from telegram import CallbackQuery, Chat, Message, MessageEntity, Update, User
 from telegram.constants import ParseMode
 
 from koch_guru.bot import handlers
 from koch_guru.bot.app import build_application
+from koch_guru.bot.render import week_keyboard
 from koch_guru.config import load_settings
 from koch_guru.models import Recipe
+from koch_guru.services.conversation import ConversationStore
 from koch_guru.services.recommend import Pick, Selection
 
 PHILIP, STRANGER = 111, 999
@@ -34,11 +36,18 @@ def update_from(user_id, text, edited=False):
     return Update(update_id=1, edited_message=msg) if edited else Update(update_id=1, message=msg)
 
 
+def callback_from(user_id, data):
+    query = CallbackQuery(id="q", from_user=User(id=user_id, first_name="T", is_bot=False),
+                          chat_instance="c", data=data)
+    return Update(update_id=2, callback_query=query)
+
+
 def matching_callbacks(app, update):
     # Pretend getMe already ran, so command filters know the bot's username.
     app.bot._bot_user = User(id=123456, first_name="KochGuru", is_bot=True, username="kochguru_bot")
     update.set_bot(app.bot)
-    update.effective_message.set_bot(app.bot)
+    if update.effective_message:
+        update.effective_message.set_bot(app.bot)
     return [h.callback for h in app.handlers[0] if h.check_update(update)]
 
 
@@ -46,9 +55,13 @@ def test_routing_and_access_control():
     app = build_application(settings())
     assert matching_callbacks(app, update_from(PHILIP, "was vegetarisches"))[0] is handlers.suggest
     assert matching_callbacks(app, update_from(PHILIP, "/zufall"))[0] is handlers.random_recipes
+    assert matching_callbacks(app, update_from(PHILIP, "/woche"))[0] is handlers.week
+    assert matching_callbacks(app, update_from(PHILIP, "/woche_leeren"))[0] is handlers.week_clear
+    assert matching_callbacks(app, update_from(PHILIP, "/neu"))[0] is handlers.reset_conversation
     assert matching_callbacks(app, update_from(PHILIP, "/unbekannt"))[0] is handlers.unsupported
+    assert matching_callbacks(app, callback_from(PHILIP, "cw:abc")) == [handlers.toggle_week]
     assert matching_callbacks(app, update_from(STRANGER, "was vegetarisches")) == [handlers.not_allowed]
-    assert matching_callbacks(app, update_from(STRANGER, "/zufall")) == [handlers.not_allowed]
+    assert matching_callbacks(app, update_from(STRANGER, "/woche")) == [handlers.not_allowed]
     assert matching_callbacks(app, update_from(PHILIP, "edit", edited=True)) == []
     assert app.error_handlers
 
@@ -58,36 +71,128 @@ def test_empty_allowlist_locks_everyone_out():
     assert matching_callbacks(app, update_from(PHILIP, "hallo")) == [handlers.not_allowed]
 
 
+RAMEN = Recipe(id="aaaa-1", name="Ramen", notion_url="https://www.notion.so/a")
+SPAETZLE = Recipe(id="bbbb-2", name="Käse & Spätzle", notion_url="https://www.notion.so/b",
+                  url="https://x.de/s", this_week=True)
+
+
 class FakeRepo:
+    supports_this_week = True
+
+    def __init__(self):
+        self.updates = []
+        self.cleared = False
+
     async def list_recipes(self, force_refresh=False):
-        return [
-            Recipe(id="a", name="Ramen", notion_url="https://www.notion.so/a"),
-            Recipe(id="b", name="Käse & Spätzle", notion_url="https://www.notion.so/b", url="https://x.de/s"),
-        ]
+        return [RAMEN, SPAETZLE]
+
+    async def set_this_week(self, page_id, value):
+        self.updates.append((page_id, value))
+
+    async def clear_this_week(self):
+        self.cleared = True
+        return 1
 
 
 class FakeLLM:
-    async def structured(self, *, system, user, output_type):
+    def __init__(self):
+        self.calls = []
+
+    async def structured(self, *, system, messages, output_type):
+        self.calls.append(messages)
         return Selection(antwort="Heute was Deftiges?", rezepte=[Pick(nr=2, grund="macht satt")])
 
 
-def fake_update(text):
+def fake_update(text, chat_id=PHILIP):
     message = SimpleNamespace(text=text, reply_text=AsyncMock(), chat=SimpleNamespace(send_action=AsyncMock()))
-    return SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=PHILIP)), message
+    update = SimpleNamespace(
+        effective_message=message, effective_user=SimpleNamespace(id=PHILIP),
+        effective_chat=SimpleNamespace(id=chat_id), callback_query=None,
+    )
+    return update, message
 
 
-def fake_context(error=None):
-    return SimpleNamespace(bot_data={"services": handlers.Services(repo=FakeRepo(), llm=FakeLLM())}, error=error)
+def fake_context(svc=None, error=None):
+    svc = svc or handlers.Services(repo=FakeRepo(), llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+    return SimpleNamespace(bot_data={"services": svc}, error=error)
 
 
-async def test_suggest_replies_with_escaped_html():
+async def test_suggest_replies_with_html_and_week_buttons():
     update, message = fake_update("was Deftiges")
     await handlers.suggest(update, fake_context())
     message.chat.send_action.assert_awaited_once()
     text = message.reply_text.call_args.args[0]
-    assert message.reply_text.call_args.kwargs["parse_mode"] == ParseMode.HTML
+    kwargs = message.reply_text.call_args.kwargs
+    assert kwargs["parse_mode"] == ParseMode.HTML
     assert '<a href="https://x.de/s">Käse &amp; Spätzle</a>' in text
     assert "<i>macht satt</i>" in text
+    buttons = [b for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert [(b.text, b.callback_data) for b in buttons] == [("✅ Käse & Spätzle", "cw:bbbb2")]
+
+
+async def test_follow_up_sends_history_and_reset_clears_it():
+    llm = FakeLLM()
+    svc = handlers.Services(repo=FakeRepo(), llm=llm, conversations=ConversationStore(),
+                            allowed_user_ids=frozenset({PHILIP}))
+    await handlers.suggest(fake_update("was Deftiges")[0], fake_context(svc))
+    await handlers.suggest(fake_update("lieber ohne Käse")[0], fake_context(svc))
+
+    second = llm.calls[1]
+    assert [m["role"] for m in second] == ["user", "assistant", "user"]
+    assert "Käse & Spätzle (macht satt)" in second[1]["content"]
+    assert second[2]["content"] == "lieber ohne Käse"
+
+    update, message = fake_update("/neu")
+    await handlers.reset_conversation(update, fake_context(svc))
+    assert svc.conversations.history(PHILIP) == []
+    assert "von vorn" in message.reply_text.call_args.args[0]
+
+
+async def test_week_and_week_clear():
+    repo = FakeRepo()
+    svc = handlers.Services(repo=repo, llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+    update, message = fake_update("/woche")
+    await handlers.week(update, fake_context(svc))
+    assert "Käse &amp; Spätzle" in message.reply_text.call_args.args[0]
+    assert "Ramen" not in message.reply_text.call_args.args[0]
+
+    update, message = fake_update("/woche_leeren")
+    await handlers.week_clear(update, fake_context(svc))
+    assert repo.cleared and "1 Rezept von der Wochenliste" in message.reply_text.call_args.args[0]
+
+
+def fake_callback(user_id, data, recipes):
+    query = SimpleNamespace(
+        data=data, answer=AsyncMock(), edit_message_reply_markup=AsyncMock(),
+        message=SimpleNamespace(reply_markup=week_keyboard(recipes)),
+    )
+    return SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=user_id)), query
+
+
+async def test_toggle_week_button_adds_and_removes():
+    repo = FakeRepo()
+    svc = handlers.Services(repo=repo, llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+
+    update, query = fake_callback(PHILIP, "cw:aaaa1", [RAMEN, SPAETZLE])
+    await handlers.toggle_week(update, fake_context(svc))
+    assert repo.updates == [("aaaa1", True)]
+    assert "steht auf der Wochenliste" in query.answer.call_args.args[0]
+    new_markup = query.edit_message_reply_markup.call_args.args[0]
+    assert [b.text for row in new_markup.inline_keyboard for b in row] == ["✅ Ramen", "✅ Käse & Spätzle"]
+
+    update, query = fake_callback(PHILIP, "cw:bbbb2", [RAMEN, SPAETZLE])
+    await handlers.toggle_week(update, fake_context(svc))
+    assert repo.updates[-1] == ("bbbb2", False)
+    assert "runter" in query.answer.call_args.args[0]
+
+
+async def test_toggle_week_rejects_strangers():
+    repo = FakeRepo()
+    svc = handlers.Services(repo=repo, llm=FakeLLM(), allowed_user_ids=frozenset({PHILIP}))
+    update, query = fake_callback(STRANGER, "cw:aaaa1", [RAMEN])
+    await handlers.toggle_week(update, fake_context(svc))
+    assert repo.updates == []
+    assert "privat" in query.answer.call_args.args[0]
 
 
 async def test_error_handler_tells_the_user(monkeypatch):
@@ -97,9 +202,17 @@ async def test_error_handler_tells_the_user(monkeypatch):
     assert "schiefgegangen" in reply.call_args.args[0]
 
 
+async def test_error_handler_answers_button_presses(monkeypatch):
+    answer = AsyncMock()
+    monkeypatch.setattr(CallbackQuery, "answer", answer)
+    await handlers.on_error(callback_from(PHILIP, "cw:x"), fake_context(error=RuntimeError("boom")))
+    assert answer.call_args.kwargs["show_alert"] is True
+
+
 def test_error_texts_point_to_the_cause():
     import httpx2
     import openai
+    from notion_client import APIResponseError
 
     request = httpx2.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
 
@@ -110,3 +223,7 @@ def test_error_texts_point_to_the_cause():
     assert "Guthaben" in handlers.error_text(status_error(openai.APIStatusError, 402))
     assert "KI" in handlers.error_text(openai.APIConnectionError(request=request))
     assert "schiefgegangen" in handlers.error_text(ValueError())
+
+    notion_403 = APIResponseError.__new__(APIResponseError)
+    notion_403.code = "restricted_resource"
+    assert "Update content" in handlers.error_text(notion_403)

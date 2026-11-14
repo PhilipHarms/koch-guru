@@ -37,7 +37,9 @@ async def test_structured_request_and_parsing():
         answer = {"antwort": "Passt!", "rezepte": [{"nr": 2, "grund": "schnell"}]}
         return httpx2.Response(200, json=completion(json.dumps(answer)))
 
-    result = await make_client(handler).structured(system="sys", user="hallo", output_type=Selection)
+    result = await make_client(handler).structured(
+        system="sys", messages=[{"role": "user", "content": "hallo"}], output_type=Selection
+    )
 
     assert result.rezepte[0].nr == 2
     body = captured["body"]

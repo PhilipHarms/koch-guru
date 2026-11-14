@@ -12,7 +12,14 @@ class Recipe:
     notion_url: str
     url: str | None = None  # external recipe link, if any
     tags: tuple[str, ...] = ()
+    origin: tuple[str, ...] = ()  # cookbook or source
     ingredients: tuple[str, ...] = ()
+    this_week: bool = False  # on the "This Week?" list
+
+    @property
+    def short_id(self) -> str:
+        """Page id without dashes, short enough for Telegram callback data."""
+        return self.id.replace("-", "")
 
     @property
     def link(self) -> str:

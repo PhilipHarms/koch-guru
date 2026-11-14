@@ -29,9 +29,10 @@ def season(day: date) -> str:
 
 
 SYSTEM_PROMPT = """\
-Du bist KochGuru, der Küchenassistent eines privaten Haushalts. Du bekommst die \
-komplette Rezeptsammlung des Haushalts als nummerierte Liste und eine Nachricht \
-mit Wünschen, Einschränkungen oder vorhandenen Zutaten.
+Du bist KochGuru, der Küchenassistent eines privaten Haushalts. Unten steht die \
+komplette Rezeptsammlung des Haushalts als nummerierte Liste. Der Haushalt schreibt \
+dir Wünsche, Einschränkungen oder vorhandene Zutaten, oft auch Rückfragen zu deinen \
+vorigen Vorschlägen.
 
 Deine Aufgabe: Wähle passende Rezepte AUSSCHLIESSLICH aus dieser Liste aus.
 
@@ -39,9 +40,14 @@ Regeln:
 - Höchstens 4 Rezepte. Weniger ist in Ordnung, wenn nicht mehr wirklich passen. \
 Gar keins ist auch in Ordnung.
 - Einschränkungen (z. B. vegetarisch, ohne Fleisch, schnell, leicht) gelten strikt. \
-Wenn Name und Tags nicht eindeutig zeigen, dass ein Rezept passt, lass es weg.
+Wenn Name, Tags und Zutaten nicht eindeutig zeigen, dass ein Rezept passt, lass es weg.
 - Nennt die Nachricht vorhandene Zutaten, bevorzuge Rezepte, die sie verwenden.
 - Ohne konkreten Wunsch: wähle eine abwechslungsreiche Mischung, die zur Jahreszeit passt.
+- Rückfragen wie „lieber ohne Fleisch“ oder „noch was anderes“ beziehen sich auf den \
+bisherigen Verlauf. Wiederhole dann keine Rezepte, die du gerade schon vorgeschlagen hast, \
+außer der Haushalt fragt ausdrücklich danach.
+- Rezepte mit dem Vermerk „steht schon auf der Wochenliste“ schlägst du nur vor, wenn \
+danach gefragt wird.
 - Verwende nur Nummern, die in der Liste stehen. Erfinde keine Rezepte.
 
 Antwortstil: Deutsch, locker, kurz.
@@ -62,10 +68,11 @@ class Selection(BaseModel):
 
 
 T = TypeVar("T", bound=BaseModel)
+Message = dict[str, str]  # {"role": "user" | "assistant", "content": ...}
 
 
 class StructuredLLM(Protocol):
-    async def structured(self, *, system: str, user: str, output_type: type[T]) -> T: ...
+    async def structured(self, *, system: str, messages: list[Message], output_type: type[T]) -> T: ...
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,13 @@ class Recommendation:
     message: str
     suggestions: list[Suggestion]
 
+    def as_history(self) -> str:
+        """Plain-text version for the conversation history. Uses names, not catalog numbers,
+        because numbers can shift when the recipe list is reloaded."""
+        lines = [self.message] if self.message else []
+        lines += [f"- {s.recipe.name} ({s.reason})" for s in self.suggestions]
+        return "\n".join(lines) or "(keine Vorschläge)"
+
 
 def build_catalog(recipes: list[Recipe]) -> str:
     lines = []
@@ -86,17 +100,21 @@ def build_catalog(recipes: list[Recipe]) -> str:
         line = f"[{nr}] {recipe.name}"
         if recipe.tags:
             line += f" | Tags: {', '.join(recipe.tags)}"
+        if recipe.origin:
+            line += f" | Quelle: {', '.join(recipe.origin)}"
         if recipe.ingredients:
-            line += f" | Zutaten: {'; '.join(recipe.ingredients)}"
+            line += f" | Zutaten: {', '.join(recipe.ingredients)}"
+        if recipe.this_week:
+            line += " | steht schon auf der Wochenliste"
         lines.append(line)
     return "\n".join(lines)
 
 
-def build_user_prompt(wish: str, recipes: list[Recipe], today: date) -> str:
+def build_system_prompt(recipes: list[Recipe], today: date) -> str:
     return (
+        f"{SYSTEM_PROMPT}\n"
         f"Heute ist der {today.day}. {MONTHS[today.month - 1]} {today.year} ({season(today)}).\n\n"
-        f"<rezeptsammlung>\n{build_catalog(recipes)}\n</rezeptsammlung>\n\n"
-        f"<nachricht>\n{wish}\n</nachricht>"
+        f"<rezeptsammlung>\n{build_catalog(recipes)}\n</rezeptsammlung>"
     )
 
 
@@ -118,6 +136,7 @@ async def recommend(
     wish: str,
     recipes: list[Recipe],
     llm: StructuredLLM,
+    history: list[Message] | None = None,
     today: date | None = None,
 ) -> Recommendation:
     if not recipes:
@@ -126,8 +145,8 @@ async def recommend(
             suggestions=[],
         )
     selection = await llm.structured(
-        system=SYSTEM_PROMPT,
-        user=build_user_prompt(wish, recipes, today or date.today()),
+        system=build_system_prompt(recipes, today or date.today()),
+        messages=[*(history or []), {"role": "user", "content": wish}],
         output_type=Selection,
     )
     return to_recommendation(selection, recipes)
