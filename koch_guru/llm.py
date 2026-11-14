@@ -1,20 +1,31 @@
-"""Thin wrapper around the Claude API. Prompts live in the services, not here."""
+"""Thin wrapper around OpenRouter (OpenAI-compatible API). Prompts live in the services."""
 
 from __future__ import annotations
 
 from typing import TypeVar
 
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 class LLMClient:
-    def __init__(self, client: AsyncAnthropic, model: str, effort: str) -> None:
+    def __init__(self, client: AsyncOpenAI, model: str) -> None:
         self._client = client
         self.model = model
-        self.effort = effort
+
+    @classmethod
+    def for_openrouter(cls, api_key: str, model: str) -> LLMClient:
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=OPENROUTER_BASE_URL,
+            default_headers={"X-Title": "KochGuru"},  # app name in the OpenRouter dashboard
+            timeout=60,
+        )
+        return cls(client, model)
 
     async def structured(
         self,
@@ -22,20 +33,25 @@ class LLMClient:
         system: str,
         user: str,
         output_type: type[T],
-        max_tokens: int = 4096,
+        max_tokens: int = 2048,
     ) -> T:
-        """Ask Claude for a response that is validated against `output_type`."""
-        response = await self._client.messages.parse(
+        """Ask the model for a response that is validated against `output_type`."""
+        completion = await self._client.chat.completions.parse(
             model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            response_format=output_type,
             max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            output_format=output_type,
-            output_config={"effort": self.effort},
+            # Only route to providers that enforce the JSON schema.
+            extra_body={"provider": {"require_parameters": True}},
         )
-        if response.parsed_output is None:
-            raise RuntimeError(f"Claude hat keine gültige Antwort geliefert ({response.stop_reason}).")
-        return response.parsed_output
+        choice = completion.choices[0]
+        if choice.message.parsed is None:
+            reason = choice.message.refusal or choice.finish_reason
+            raise RuntimeError(f"Das Modell hat keine gültige Antwort geliefert ({reason}).")
+        return choice.message.parsed
 
     async def close(self) -> None:
         await self._client.close()

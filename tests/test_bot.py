@@ -19,7 +19,7 @@ PHILIP, STRANGER = 111, 999
 def settings(allowed="111"):
     return load_settings({
         "TELEGRAM_TOKEN": "123456:TEST", "NOTION_TOKEN": "n", "NOTION_DATABASE_ID": "db",
-        "ANTHROPIC_API_KEY": "a", "ALLOWED_USER_IDS": allowed,
+        "OPENROUTER_API_KEY": "a", "ALLOWED_USER_IDS": allowed,
     })
 
 
@@ -95,3 +95,18 @@ async def test_error_handler_tells_the_user(monkeypatch):
     monkeypatch.setattr(Message, "reply_text", reply)
     await handlers.on_error(update_from(PHILIP, "hallo"), fake_context(error=RuntimeError("boom")))
     assert "schiefgegangen" in reply.call_args.args[0]
+
+
+def test_error_texts_point_to_the_cause():
+    import httpx2
+    import openai
+
+    request = httpx2.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+    def status_error(cls, code):
+        return cls("x", response=httpx2.Response(code, request=request), body=None)
+
+    assert "OPENROUTER_API_KEY" in handlers.error_text(status_error(openai.AuthenticationError, 401))
+    assert "Guthaben" in handlers.error_text(status_error(openai.APIStatusError, 402))
+    assert "KI" in handlers.error_text(openai.APIConnectionError(request=request))
+    assert "schiefgegangen" in handlers.error_text(ValueError())

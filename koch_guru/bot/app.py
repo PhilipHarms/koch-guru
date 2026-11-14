@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from anthropic import AsyncAnthropic
 from notion_client import AsyncClient
 from telegram import BotCommand, Update
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters
@@ -31,16 +30,12 @@ def build_application(settings: Settings) -> Application:
         settings.properties,
         cache_seconds=settings.recipe_cache_seconds,
     )
-    llm = LLMClient(
-        AsyncAnthropic(api_key=settings.anthropic_api_key),
-        model=settings.anthropic_model,
-        effort=settings.anthropic_effort,
-    )
+    llm = LLMClient.for_openrouter(settings.openrouter_api_key, settings.model)
 
     async def post_init(app: Application) -> None:
         await repo.connect()
         await app.bot.set_my_commands(COMMANDS)
-        log.info("Modell: %s (effort=%s)", llm.model, llm.effort)
+        log.info("Modell über OpenRouter: %s", llm.model)
 
     async def post_shutdown(app: Application) -> None:
         await notion.aclose()
