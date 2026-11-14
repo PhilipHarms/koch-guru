@@ -244,7 +244,8 @@ def test_error_texts_point_to_the_cause():
 
 
 DRAFT = RecipeDraft(name="Ofen-Süßkartoffeln <mit> Feta", url="https://example.com/r",
-                    ingredients=["500 g Süßkartoffeln", "200 g Feta"], steps=["Backen."], tags=["Veggie"])
+                    ingredients=["500 g Süßkartoffeln", "200 g Feta"], steps=["Backen."], tags=["Veggie"],
+                    icon="🍠")
 
 
 def import_services(monkeypatch, repo, result=DRAFT):
@@ -272,7 +273,7 @@ async def test_link_preview_then_save(monkeypatch):
     await handlers.import_link(update, fake_context(svc))
 
     preview = message.reply_text.call_args.args[0]
-    assert "<b>Ofen-Süßkartoffeln &lt;mit&gt; Feta</b>" in preview
+    assert preview.startswith("🍠 <b>Ofen-Süßkartoffeln &lt;mit&gt; Feta</b>")
     assert "<b>Tags:</b> Veggie" in preview and "Soll ich das Rezept in Notion anlegen?" in preview
     buttons = [b for row in message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard for b in row]
     save, drop = (b.callback_data for b in buttons)

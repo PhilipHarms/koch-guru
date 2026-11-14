@@ -313,7 +313,17 @@ class RecipeRepository:
         }
         if draft.image:
             kwargs["cover"] = {"type": "external", "external": {"url": draft.image}}
-        page = await self._client.pages.create(**kwargs)
+        if draft.icon:
+            kwargs["icon"] = {"type": "emoji", "emoji": draft.icon}
+        try:
+            page = await self._client.pages.create(**kwargs)
+        except APIResponseError as exc:
+            # Notion rejects emojis it does not know. Save the recipe anyway, just without icon.
+            if exc.code != APIErrorCode.ValidationError or "icon" not in kwargs:
+                raise
+            log.warning("Notion hat das Icon %r abgelehnt, speichere ohne Icon.", draft.icon)
+            kwargs.pop("icon")
+            page = await self._client.pages.create(**kwargs)
         self._cache = None  # reload on next access so the new recipe shows up
         recipe = page_to_recipe(page, self._mapping)
         return recipe or Recipe(id=page["id"], name=draft.name, notion_url=page.get("url", ""), url=draft.url)

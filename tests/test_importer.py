@@ -6,8 +6,9 @@ import pytest
 from koch_guru.services.importer import (
     ExtractedRecipe,
     RecipeImportError,
-    TagChoice,
+    Classification,
     draft_from_jsonld,
+    clean_emoji,
     filter_tags,
     find_jsonld_recipe,
     find_url,
@@ -118,15 +119,16 @@ def test_filter_tags_keeps_only_existing_options_in_their_spelling():
 
 
 class FakeLLM:
-    def __init__(self, tags=None, extracted=None):
+    def __init__(self, tags=None, extracted=None, emoji="🍠"):
         self.tags = tags or []
+        self.emoji = emoji
         self.extracted = extracted
         self.calls = []
 
     async def structured(self, *, system, messages, output_type):
         self.calls.append((output_type, system, messages))
-        if output_type is TagChoice:
-            return TagChoice(tags=self.tags)
+        if output_type is Classification:
+            return Classification(tags=self.tags, emoji=self.emoji)
         if output_type is ExtractedRecipe:
             return self.extracted
         raise AssertionError(output_type)
@@ -149,7 +151,8 @@ async def test_import_with_jsonld_uses_model_only_for_tags():
     assert draft.url == "https://example.com/recipe"
     assert draft.tags == ["Veggie"]
     assert draft.source == "json-ld"
-    assert [c[0] for c in llm.calls] == [TagChoice]
+    assert draft.icon == "🍠"
+    assert [c[0] for c in llm.calls] == [Classification]
     assert "Veggie, Winter, New, Pasta" in llm.calls[0][1]
 
 
@@ -157,18 +160,21 @@ async def test_import_without_jsonld_reads_page_text_with_model():
     body = ('<html><head><meta property="og:image" content="https://img/og.jpg"></head><body>'
             + "<p>Omas Linsensuppe mit Würstchen und viel Liebe gekocht.</p>" * 10 + "</body></html>")
     extracted = ExtractedRecipe(ist_rezept=True, name="Omas Linsensuppe", zutaten=["250 g Linsen", " "],
-                                schritte=["Kochen."], portionen="", minuten=0, tags=["Winter", "Quatsch"])
+                                schritte=["Kochen."], portionen="", minuten=0, tags=["Winter", "Quatsch"],
+                                emoji="Suppe")
     llm = FakeLLM(extracted=extracted)
     draft = await import_from_url("https://example.com/recipe", http_client({"/recipe": (200, body, "text/html")}),
                                   llm, TAGS)
     assert (draft.name, draft.ingredients, draft.tags) == ("Omas Linsensuppe", ["250 g Linsen"], ["Winter"])
     assert (draft.servings, draft.total_minutes, draft.image, draft.source) == (None, None, "https://img/og.jpg", "text")
+    assert draft.icon == "🍽️"  # "Suppe" is text, not an emoji
     assert "<seite>" in llm.calls[0][2][0]["content"]
 
 
 async def test_import_rejects_pages_without_recipe():
     body = "<html><body>" + "<p>Nur ein Blogartikel über das Wetter.</p>" * 10 + "</body></html>"
-    extracted = ExtractedRecipe(ist_rezept=False, name="", zutaten=[], schritte=[], portionen="", minuten=0, tags=[])
+    extracted = ExtractedRecipe(ist_rezept=False, name="", zutaten=[], schritte=[], portionen="", minuten=0, tags=[],
+                                emoji="")
     with pytest.raises(RecipeImportError, match="kein Rezept"):
         await import_from_url("https://example.com/recipe", http_client({"/recipe": (200, body, "text/html")}),
                               FakeLLM(extracted=extracted), TAGS)
@@ -182,3 +188,11 @@ async def test_import_rejects_pages_without_recipe():
 async def test_import_errors_have_readable_messages(pages, message):
     with pytest.raises(RecipeImportError, match=message):
         await import_from_url("https://example.com/recipe", http_client(pages), FakeLLM(), TAGS)
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("🍝", "🍝"), (" 🍲 ", "🍲"), ("🍽️", "🍽️"), ("👩‍🍳", "👩‍🍳"),
+    ("Pasta", None), ("🍝 Pasta", None), ("🍝🍛", "🍝🍛"), ("", None), (None, None), ("1️⃣", None),
+])
+def test_clean_emoji(value, expected):
+    assert clean_emoji(value) == expected

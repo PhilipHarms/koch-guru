@@ -103,6 +103,7 @@ class FakeNotion:
         self.query_calls = 0
         self.updates = []
         self.created = []
+        self.reject_icons = False
 
     @staticmethod
     def error(status, code):
@@ -133,7 +134,10 @@ class FakeNotion:
             self.query_calls += 1
             return self.paginate(self.pages, request)
         if path == "/v1/pages" and request.method == "POST":
-            self.created.append(json.loads(request.content))
+            body = json.loads(request.content)
+            self.created.append(body)
+            if self.reject_icons and "icon" in body:
+                return self.error(400, "validation_error")
             return httpx.Response(200, json=page(500, "Neues Rezept", "https://example.com/r"))
         if path.startswith("/v1/pages/") and request.method == "PATCH":
             page_id = path.rsplit("/", 1)[1]
@@ -204,6 +208,7 @@ async def test_clear_this_week_unticks_only_planned_recipes():
 DRAFT = RecipeDraft(
     name="Ofen-Süßkartoffeln", url="https://example.com/r", ingredients=["500 g Süßkartoffeln", "200 g Feta"],
     steps=["Backen."], servings="4", total_minutes=45, image="https://img.example/a.jpg", tags=["Veggie"],
+    icon="🍠",
 )
 
 
@@ -220,6 +225,7 @@ async def test_create_recipe_payload():
     assert body["properties"]["Tags"] == {"multi_select": [{"name": "Veggie"}]}
     assert "This Week?" not in body["properties"] and "Ingredients" not in body["properties"]
     assert body["cover"] == {"type": "external", "external": {"url": "https://img.example/a.jpg"}}
+    assert body["icon"] == {"type": "emoji", "emoji": "🍠"}
     kinds = [b["type"] for b in body["children"]]
     assert kinds == ["paragraph", "heading_2", "bulleted_list_item", "bulleted_list_item",
                      "heading_2", "numbered_list_item"]
@@ -254,3 +260,11 @@ async def test_find_existing_by_link_then_by_name():
     assert (existing.name, reason) == ("Rezept 002", "name")
 
     assert await repo.find_existing(RecipeDraft(name="Neu", url="https://n.de", ingredients=["a"])) == (None, "")
+
+
+async def test_unknown_emoji_is_dropped_and_recipe_still_saved():
+    fake = FakeNotion(total=1)
+    fake.reject_icons = True
+    recipe = await make_repo(fake).create_recipe(DRAFT)
+    assert recipe.name == "Neues Rezept"
+    assert ["icon" in body for body in fake.created] == [True, False]

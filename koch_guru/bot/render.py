@@ -93,7 +93,7 @@ def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> s
         shown += f" und {more} weitere"
 
     lines = [
-        f"📖 <b>{escape(draft.name)}</b>",
+        f"{draft.icon or '📖'} <b>{escape(draft.name)}</b>",
         " · ".join(facts),
         "",
         f"<b>Tags:</b> {escape(', '.join(draft.tags)) if draft.tags else 'keine passenden gefunden'}",

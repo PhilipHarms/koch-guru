@@ -51,6 +51,7 @@ class RecipeDraft:
     total_minutes: int | None = None
     image: str | None = None
     tags: list[str] = field(default_factory=list)
+    icon: str | None = None  # emoji for the Notion page
     source: str = "json-ld"  # or "text" when extracted by the model
 
     @property
@@ -254,8 +255,12 @@ def draft_from_jsonld(data: dict[str, Any], url: str) -> RecipeDraft | None:
 
 # --- Model-assisted parts ------------------------------------------------------------
 
-class TagChoice(BaseModel):
+EMOJI_FIELD = "Genau ein Emoji, das das Gericht gut darstellt"
+
+
+class Classification(BaseModel):
     tags: list[str] = Field(description="Passende Tags, nur aus der vorgegebenen Liste")
+    emoji: str = Field(description=EMOJI_FIELD)
 
 
 class ExtractedRecipe(BaseModel):
@@ -266,26 +271,42 @@ class ExtractedRecipe(BaseModel):
     portionen: str = Field(description="Portionen oder leer")
     minuten: int = Field(description="Gesamtzeit in Minuten oder 0, wenn unbekannt")
     tags: list[str] = Field(description="Passende Tags, nur aus der vorgegebenen Liste")
+    emoji: str = Field(description=EMOJI_FIELD)
 
 
 TAG_RULES = (
     "Wähle passende Tags NUR aus dieser Liste, exakt so geschrieben: {options}. "
     "Nimm nur Tags, die eindeutig zutreffen, zum Beispiel Ernährungsform, Gerichtart, Küche "
-    "oder Saison. Lieber zu wenige als falsche. Ist die Liste leer, gib keine Tags zurück."
+    "oder Saison. Lieber zu wenige als falsche. Ist die Liste leer, gib keine Tags zurück. "
+    "Wähle außerdem genau ein Emoji als Icon, das das Gericht möglichst konkret zeigt, zum Beispiel "
+    "🍝 Pasta, 🍛 Curry, 🥗 Salat, 🍲 Eintopf oder Suppe, 🍕 Pizza, 🌮 Tacos, 🍜 Nudelsuppe, "
+    "🥘 Pfannengericht, 🍰 Kuchen. Nur ein einzelnes Emoji, kein Text."
 )
 
+FALLBACK_ICON = "🍽️"
 
-async def choose_tags(draft: RecipeDraft, options: list[str], llm: StructuredLLM) -> list[str]:
-    if not options:
-        return []
+
+def clean_emoji(value: str | None) -> str | None:
+    """A single emoji or None. Rejects text, so Notion never gets an invalid icon."""
+    value = (value or "").strip()
+    if not value or len(value) > 8 or any(ch.isascii() and not ch.isspace() for ch in value):
+        return None
+    if any(ch.isspace() for ch in value):
+        return None
+    return value
+
+
+async def classify(draft: RecipeDraft, options: list[str], llm: StructuredLLM) -> None:
+    """Set tags (existing options only) and an emoji icon on the draft."""
     summary = f"Rezept: {draft.name}\nZutaten: {'; '.join(draft.ingredients)}"
     choice = await llm.structured(
         system="Du ordnest Rezepte in eine private Rezeptsammlung ein. "
         + TAG_RULES.format(options=", ".join(options)),
         messages=[{"role": "user", "content": summary}],
-        output_type=TagChoice,
+        output_type=Classification,
     )
-    return filter_tags(choice.tags, options)
+    draft.tags = filter_tags(choice.tags, options)
+    draft.icon = clean_emoji(choice.emoji) or FALLBACK_ICON
 
 
 def filter_tags(tags: list[str], options: list[str]) -> list[str]:
@@ -325,6 +346,7 @@ async def extract_with_llm(url: str, page_html: str, options: list[str], llm: St
         total_minutes=result.minuten or None,
         image=_image(meta.get("og:image")),
         tags=filter_tags(result.tags, options),
+        icon=clean_emoji(result.emoji) or FALLBACK_ICON,
         source="text",
     )
 
@@ -338,5 +360,5 @@ async def import_from_url(
     if draft is None:
         log.info("Kein JSON-LD-Rezept auf %s, lese Seitentext mit dem Modell.", final_url)
         return await extract_with_llm(final_url, page_html, tag_options, llm)
-    draft.tags = await choose_tags(draft, tag_options, llm)
+    await classify(draft, tag_options, llm)
     return draft
