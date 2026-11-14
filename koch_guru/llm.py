@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -31,7 +31,7 @@ class LLMClient:
         self,
         *,
         system: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         output_type: type[T],
         max_tokens: int = 2048,
     ) -> T:

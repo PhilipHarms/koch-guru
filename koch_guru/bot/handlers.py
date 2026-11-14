@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+from html import escape
+from typing import Any, Awaitable, TypeVar
 
 import httpx
 import openai
 from notion_client import APIErrorCode, APIResponseError
-from telegram import InlineKeyboardMarkup, LinkPreviewOptions, Update
+from telegram import InlineKeyboardMarkup, LinkPreviewOptions, Message, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 
@@ -30,12 +33,23 @@ from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.services.conversation import ConversationStore
 from koch_guru.services.drafts import DraftStore
-from koch_guru.services.importer import RecipeImportError, find_url, import_from_url
+from koch_guru.services.importer import (
+    MAX_PHOTOS,
+    PHOTO_TYPES,
+    Photo,
+    RecipeDraft,
+    RecipeImportError,
+    find_url,
+    import_from_photos,
+    import_from_url,
+)
 from koch_guru.services.recommend import recommend
 
 log = logging.getLogger(__name__)
 
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
+ALBUM_WAIT_SECONDS = 2.0  # photos of one album arrive as separate messages
+T = TypeVar("T")
 
 HELP_TEXT = (
     "👋 Ich bin dein KochGuru und schlage dir Rezepte aus deiner Notion-Sammlung vor.\n\n"
@@ -44,7 +58,8 @@ HELP_TEXT = (
     "• <i>Wir haben noch Brokkoli und Feta</i>\n"
     "• <i>Ideen für die Woche, gern mal was Asiatisches</i>\n"
     "Rückfragen wie <i>lieber ohne Fleisch</i> verstehe ich auch.\n\n"
-    "Schick mir einen Link zu einem Rezept, dann lege ich es nach kurzer Vorschau in Notion an.\n\n"
+    "Schick mir einen Link oder ein Foto von einem Rezept (gern auch mehrere Fotos als Album), "
+    "dann lege ich es nach kurzer Vorschau in Notion an.\n\n"
     "Mit 📅 unter einem Vorschlag setzt du das Rezept auf die Wochenliste, mit ✅ wieder runter.\n\n"
     "/woche: Wochenliste anzeigen\n"
     "/woche_leeren: Wochenliste leeren\n"
@@ -62,6 +77,7 @@ class Services:
     allowed_user_ids: frozenset[int] = frozenset()
     http: httpx.AsyncClient | None = None
     drafts: DraftStore = field(default_factory=DraftStore)
+    albums: dict[str, list[Any]] = field(default_factory=dict)
 
 
 def services(context: ContextTypes.DEFAULT_TYPE) -> Services:
@@ -76,6 +92,21 @@ async def reply_html(update: Update, text: str, markup: InlineKeyboardMarkup | N
 
 def keyboard_for(svc: Services, recipes: list[Recipe]) -> InlineKeyboardMarkup | None:
     return week_keyboard(recipes) if svc.repo.supports_this_week else None
+
+
+async def with_typing(chat: Any, awaitable: Awaitable[T]) -> T:
+    """Show "typing…" until the work is done (Telegram hides it after about five seconds)."""
+    async def keep_alive() -> None:
+        while True:
+            await asyncio.sleep(4)
+            await chat.send_action(ChatAction.TYPING)
+
+    await chat.send_action(ChatAction.TYPING)
+    task = asyncio.create_task(keep_alive())
+    try:
+        return await awaitable
+    finally:
+        task.cancel()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -109,12 +140,12 @@ async def suggest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     wish = (message.text or "").strip()
     if not wish:
         return
-    await message.chat.send_action(ChatAction.TYPING)
-
     svc = services(context)
     chat_id = update.effective_chat.id
     recipes = await svc.repo.list_recipes()
-    result = await recommend(wish, recipes, svc.llm, history=svc.conversations.history(chat_id))
+    result = await with_typing(
+        message.chat, recommend(wish, recipes, svc.llm, history=svc.conversations.history(chat_id))
+    )
     svc.conversations.add_exchange(chat_id, wish, result.as_history())
     await reply_html(
         update,
@@ -186,15 +217,58 @@ async def import_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     url = find_url(message.text or "")
     if not url:
         return
-    await message.chat.send_action(ChatAction.TYPING)
     svc = services(context)
+    try:
+        draft = await with_typing(
+            message.chat, import_from_url(url, svc.http, svc.llm, svc.repo.tag_options)
+        )
+    except RecipeImportError as exc:
+        await reply_html(update, f"{escape(str(exc))} Das Rezept kann ich so leider nicht übernehmen.")
+        return
+    await show_draft(update, svc, draft)
+
+
+async def _download(message: Message) -> Photo | None:
+    if message.photo:
+        file = await message.photo[-1].get_file()  # largest size
+        return bytes(await file.download_as_bytearray()), "image/jpeg"
+    document = message.document
+    if document and document.mime_type in PHOTO_TYPES:
+        file = await document.get_file()
+        return bytes(await file.download_as_bytearray()), document.mime_type
+    return None
+
+
+async def photo_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A photo (or an album of photos) of a recipe: read it and show a preview."""
+    message = update.effective_message
+    svc = services(context)
+    messages = [message]
+    if message.media_group_id:
+        album = svc.albums.setdefault(message.media_group_id, [])
+        album.append(message)
+        if len(album) > 1:
+            return  # the first photo of the album handles all of them
+        await asyncio.sleep(ALBUM_WAIT_SECONDS)
+        messages = svc.albums.pop(message.media_group_id, album)
+
+    async def read() -> RecipeDraft:
+        photos = [p for m in messages[:MAX_PHOTOS] if (p := await _download(m))]
+        caption = " ".join(m.caption for m in messages if m.caption)
+        return await import_from_photos(
+            photos, caption, svc.llm, svc.repo.tag_options, svc.repo.origin_options
+        )
 
     try:
-        draft = await import_from_url(url, svc.http, svc.llm, svc.repo.tag_options)
+        draft = await with_typing(message.chat, read())
     except RecipeImportError as exc:
-        await reply_html(update, f"{exc} Das Rezept kann ich so leider nicht übernehmen.")
+        await reply_html(update, escape(str(exc)))
         return
+    await show_draft(update, svc, draft)
 
+
+async def show_draft(update: Update, svc: Services, draft: RecipeDraft) -> None:
+    """Preview with Save/Discard, or a hint if the recipe is already in the collection."""
     existing, reason = await svc.repo.find_existing(draft)
     if reason == "link":
         await reply_html(

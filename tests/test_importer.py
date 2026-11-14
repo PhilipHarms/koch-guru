@@ -196,3 +196,60 @@ async def test_import_errors_have_readable_messages(pages, message):
 ])
 def test_clean_emoji(value, expected):
     assert clean_emoji(value) == expected
+
+
+# --- Photos ----------------------------------------------------------------------------
+
+from koch_guru.services.importer import PhotoRecipe, import_from_photos  # noqa: E402
+
+ORIGINS = ["Green Feast (Autumn Winter)", "Ottolenghi Simple"]
+
+
+def photo_result(**overrides):
+    values = dict(ist_rezept=True, name="Kürbis-Dal", zutaten=["1 Kürbis", "200 g rote Linsen"],
+                  schritte=["Kochen."], portionen="4", minuten=40, tags=["veggie", "Erfunden"], emoji="🍛",
+                  quelle="green feast (autumn winter)")
+    values.update(overrides)
+    return PhotoRecipe(**values)
+
+
+class PhotoLLM:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def structured(self, *, system, messages, output_type):
+        self.calls.append((system, messages, output_type))
+        return self.result
+
+
+async def test_photos_are_sent_as_images_with_caption():
+    llm = PhotoLLM(photo_result())
+    photos = [(b"\xff\xd8jpeg-1", "image/jpeg"), (b"png-2", "image/png"), (b"heic", "image/heic")]
+    draft = await import_from_photos(photos, "aus Green Feast, S. 112", llm, TAGS, ORIGINS)
+
+    system, messages, output_type = llm.calls[0]
+    assert output_type is PhotoRecipe
+    assert "Green Feast (Autumn Winter), Ottolenghi Simple" in system
+    content = messages[0]["content"]
+    assert content[0] == {"type": "text", "text": "Lies das Rezept von diesen Fotos ab.\nBildunterschrift: aus Green Feast, S. 112"}
+    assert [c["image_url"]["url"][:22] for c in content[1:]] == ["data:image/jpeg;base64", "data:image/png;base64,"]
+
+    assert (draft.name, draft.url, draft.site, draft.source) == ("Kürbis-Dal", "", "", "photo")
+    assert draft.tags == ["Veggie"] and draft.icon == "🍛"
+    assert draft.origin == ["Green Feast (Autumn Winter)"]
+    assert (draft.servings, draft.total_minutes) == ("4", 40)
+    assert len(draft.photos) == 2  # the HEIC file is skipped
+
+
+async def test_unknown_cookbook_is_not_set():
+    draft = await import_from_photos([(b"x", "image/jpeg")], "", PhotoLLM(photo_result(quelle="Mein Notizbuch")),
+                                     TAGS, ORIGINS)
+    assert draft.origin == []
+
+
+async def test_photo_without_recipe_or_supported_format():
+    with pytest.raises(RecipeImportError, match="kein Rezept"):
+        await import_from_photos([(b"x", "image/jpeg")], "", PhotoLLM(photo_result(ist_rezept=False)), TAGS, ORIGINS)
+    with pytest.raises(RecipeImportError, match="Bildformat"):
+        await import_from_photos([(b"x", "image/heic")], "", PhotoLLM(photo_result()), TAGS, ORIGINS)

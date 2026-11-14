@@ -8,6 +8,7 @@ tag options in Notion.
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import logging
@@ -34,17 +35,22 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class StructuredLLM(Protocol):
-    async def structured(self, *, system: str, messages: list[dict[str, str]], output_type: type[T]) -> T: ...
+    async def structured(self, *, system: str, messages: list[dict[str, Any]], output_type: type[T]) -> T: ...
 
 
 class RecipeImportError(RuntimeError):
     """Raised with a user-facing message when a page cannot be imported."""
 
 
+Photo = tuple[bytes, str]  # (image data, MIME type)
+PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_PHOTOS = 4
+
+
 @dataclass
 class RecipeDraft:
     name: str
-    url: str
+    url: str = ""  # empty for recipes from photos
     ingredients: list[str] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)
     servings: str | None = None
@@ -52,11 +58,13 @@ class RecipeDraft:
     image: str | None = None
     tags: list[str] = field(default_factory=list)
     icon: str | None = None  # emoji for the Notion page
-    source: str = "json-ld"  # or "text" when extracted by the model
+    origin: list[str] = field(default_factory=list)  # cookbook, existing Notion options only
+    photos: list[Photo] = field(default_factory=list, repr=False)  # attached to the Notion page
+    source: str = "json-ld"  # "text" or "photo" when extracted by the model
 
     @property
     def site(self) -> str:
-        return urlsplit(self.url).netloc.removeprefix("www.")
+        return urlsplit(self.url).netloc.removeprefix("www.") if self.url else ""
 
 
 # --- URLs ----------------------------------------------------------------------------
@@ -362,3 +370,68 @@ async def import_from_url(
         return await extract_with_llm(final_url, page_html, tag_options, llm)
     await classify(draft, tag_options, llm)
     return draft
+
+
+# --- Photos --------------------------------------------------------------------------
+
+class PhotoRecipe(ExtractedRecipe):
+    quelle: str = Field(
+        description="Kochbuch aus der vorgegebenen Liste, wenn eindeutig erkennbar, sonst leer"
+    )
+
+
+PHOTO_PROMPT = (
+    "Du liest Rezepte von Fotos ab: Kochbuchseiten, Zeitschriften, Screenshots oder handschriftliche "
+    "Rezepte. Mehrere Fotos gehören zum selben Rezept. Übernimm Name, Zutaten mit Mengen und die Schritte "
+    "so, wie sie dort stehen, ohne zu übersetzen oder etwas zu ergänzen. Unleserliche Stellen markierst "
+    "du mit [?]. "
+)
+ORIGIN_RULE = (
+    "Quelle: Wenn auf dem Foto oder in der Bildunterschrift eindeutig erkennbar ist, aus welchem dieser "
+    "Kochbücher das Rezept stammt, gib den Namen exakt so zurück: {options}. Sonst lass das Feld leer."
+)
+
+
+def photo_content(photos: list[Photo], caption: str) -> list[dict[str, Any]]:
+    text = "Lies das Rezept von diesen Fotos ab."
+    if caption.strip():
+        text += f"\nBildunterschrift: {caption.strip()}"
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for data, mime in photos:
+        encoded = base64.b64encode(data).decode("ascii")
+        parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+    return parts
+
+
+async def import_from_photos(
+    photos: list[Photo],
+    caption: str,
+    llm: StructuredLLM,
+    tag_options: list[str],
+    origin_options: list[str],
+) -> RecipeDraft:
+    photos = [p for p in photos if p[1] in PHOTO_TYPES][:MAX_PHOTOS]
+    if not photos:
+        raise RecipeImportError("Das Bildformat kann ich nicht lesen. Schick es bitte als Foto.")
+    system = PHOTO_PROMPT + TAG_RULES.format(options=", ".join(tag_options))
+    if origin_options:
+        system += " " + ORIGIN_RULE.format(options=", ".join(origin_options))
+    result = await llm.structured(
+        system=system,
+        messages=[{"role": "user", "content": photo_content(photos, caption)}],
+        output_type=PhotoRecipe,
+    )
+    if not result.ist_rezept or not result.name.strip() or not result.zutaten:
+        raise RecipeImportError("Auf dem Foto habe ich kein Rezept erkannt.")
+    return RecipeDraft(
+        name=result.name.strip(),
+        ingredients=[i.strip() for i in result.zutaten if i.strip()],
+        steps=[s.strip() for s in result.schritte if s.strip()],
+        servings=result.portionen.strip() or None,
+        total_minutes=result.minuten or None,
+        tags=filter_tags(result.tags, tag_options),
+        icon=clean_emoji(result.emoji) or FALLBACK_ICON,
+        origin=filter_tags([result.quelle], origin_options) if result.quelle else [],
+        photos=photos,
+        source="photo",
+    )
