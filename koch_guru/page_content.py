@@ -15,7 +15,8 @@ from typing import Any
 
 INGREDIENT_WORDS = ("zutaten", "zutat", "ingredients", "ingredient")
 STEP_WORDS = (
-    "zubereitung", "anleitung", "schritte", "instructions", "method", "directions", "preparation",
+    "zubereitung", "anleitung", "schritte", "instructions", "instruction", "method", "methods",
+    "directions", "preparation", "steps",
 )
 HEADINGS = {"heading_1": 1, "heading_2": 2, "heading_3": 3}
 TEXT_ITEMS = {"paragraph", "bulleted_list_item", "numbered_list_item", "to_do"}
@@ -34,7 +35,7 @@ AMOUNT = re.compile(
 MARKER_MAX_WORDS = 4
 INGREDIENT_MAX_CHARS = 70
 MIN_GUESSED_INGREDIENTS = 3
-NUMBERING = re.compile(r"^\s*(?:\d+\s*[.)]|(?:schritt|step)\s*\d+\s*[:.)]?)\s+", re.IGNORECASE)
+NUMBERING = re.compile(r"^\s*(?:\d+\s*[.)]|(?:schritt|step)\s*\d+\s*[:.)]?)(?:\s+|$)", re.IGNORECASE)
 GROUP_START = re.compile(r"^(?:for|für)\b", re.IGNORECASE)
 SERVES_LINE = re.compile(r"^(?:serves|makes|für|portionen:?)\s+(\d.*?)\.?$", re.IGNORECASE)
 MINUTES = re.compile(r"⏱️?\s*(\d+)\s*min", re.IGNORECASE)
@@ -328,10 +329,27 @@ def parse_content(
                 servings = serves.group(1).strip()
                 continue
         if kind in TEXT_ITEMS and section == "ingredients":
-            add_ingredients(_lines(block))
-            continue
-        if kind in TEXT_ITEMS and section == "steps":
-            steps.extend({"text": _step_text(line)} for line in _lines(block))
+            lines = _lines(block)
+            if any(not _is_step(line) for line in lines):
+                add_ingredients([line for line in lines if not _is_step(line)])
+                continue
+            # Sentences between the ingredients (an intro, a tip) are notes, not ingredients.
+        elif kind in TEXT_ITEMS and section == "steps":
+            lines = _lines(block)
+            short_label = all(
+                not _is_step(line) and not line.endswith(".") and len(line.split()) <= MARKER_MAX_WORDS
+                for line in lines
+            )
+            if steps and short_label and not all(line.endswith(":") for line in lines):
+                # "Tags", "ENJOY!", "Recipes you may like": the steps are over.
+                section, guess = None, "off"
+                rest.extend(_simple(block))
+                continue
+            for line in lines:
+                if line.endswith(":") and not _is_step(line):
+                    steps.append({"group": line.rstrip(":").strip()})
+                elif text := _step_text(line):  # "Step 1." on its own line carries no text
+                    steps.append({"text": text})
             continue
         if kind in TEXT_ITEMS and section is None and guess != "off":
             lines = _lines(block)
@@ -348,13 +366,18 @@ def parse_content(
                 guess = "steps" if not has_step_marker else "off"
             if guess == "steps":
                 if all(_is_step(line) for line in lines):
-                    steps.extend({"text": _step_text(line)} for line in lines)
+                    steps.extend({"text": text} for line in lines if (text := _step_text(line)))
                     continue
                 guess = "off"
         rest.extend(_simple(block))
 
     if not has_ingredient_list:
         items = [ingredient_item(n, None, icon_by_name.get(n)) for n in linked]
+    # A group label with nothing after it (e.g. "Top Tip" followed by prose) is dropped.
+    while items and "group" in items[-1]:
+        items.pop()
+    while steps and "group" in steps[-1]:
+        steps.pop()
 
     return {
         "minutes": minutes,
