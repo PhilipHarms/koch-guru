@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { Recipe } from '../lib/api';
 import { load, save } from '../lib/storage';
-import { hostOf } from '../lib/text';
 import { queryWords, searchScore } from '../lib/search';
 import { tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
@@ -11,9 +10,9 @@ type View = 'kacheln' | 'liste';
 type Sort = 'neu' | 'name';
 const SORT_LABEL: Record<Sort, string> = { neu: 'Neu hinzugefügt', name: 'Name' };
 
-/** Where a recipe comes from: cookbook (Origin), else the website, else our own. */
+/** Where a recipe comes from: the Origin field in Notion, else it is our own. */
 export function sourceOf(recipe: Recipe): string {
-  return recipe.origin[0] || hostOf(recipe.source_url) || 'Eigenes Rezept';
+  return recipe.origin[0] || 'Eigenes Rezept';
 }
 
 type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
