@@ -273,7 +273,7 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
   if (state.kind === 'reading') {
     return (
       <div class="leer-box" aria-live="polite">
-        <p class="text-klein">KochGuru liest das Rezept. Das dauert etwa eine halbe Minute …</p>
+        <p class="text-klein">KochGuru liest das Rezept. Das kann bis zu einer Minute dauern …</p>
       </div>
     );
   }
@@ -330,7 +330,9 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
       </div>
       <p class="text-klein muted">Angehakte Zutaten werden mit eurer Zutaten-Datenbank verknüpft und landen damit auf der Einkaufsliste.</p>
       <ul class="zutaten">
-        {value.ingredients.map((item, index) => (
+        {value.ingredients.map((item, index) => item.status === 'group' ? (
+          <li key={index} class="zutaten-gruppe overline">{item.name}</li>
+        ) : (
           <li key={index} class="zutat generiert-zutat">
             <label>
               <input type="checkbox" checked={include[index]} disabled={item.status === 'linked' || saving}

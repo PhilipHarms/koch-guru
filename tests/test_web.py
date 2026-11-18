@@ -336,8 +336,18 @@ def test_generate_preview_and_save():
     assert link == [("Kürbis", "🎃"), ("Unbekannt", None)]
 
 
+class CutOffLLM:
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.llm import ModelError
+        raise ModelError("Die Antwort war zu lang und wurde abgeschnitten.")
+
+
 def test_generate_errors():
     assert signed_in().post(f"/api/recipes/{DAL_ID}/generate").status_code == 503  # no model
+    http = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text=DAL_PAGE, headers={"content-type": "text/html"})))
+    cut = signed_in(http=http, llm=CutOffLLM()).post(f"/api/recipes/{DAL_ID}/generate")
+    assert cut.status_code == 502 and cut.json()["detail"] == "Die Antwort war zu lang und wurde abgeschnitten."
     pasta = signed_in(llm=GenerateLLM()).post(f"/api/recipes/{PASTA_ID}/generate")  # no link, no photos
     assert pasta.status_code == 422 and "weder einen Link" in pasta.json()["detail"]
     assert client(llm=GenerateLLM()).post(f"/api/recipes/{DAL_ID}/generate").status_code == 401

@@ -54,7 +54,8 @@ export type GeneratedIngredient = {
   /** The ingredient in the ingredients database, or the name it would get there. */
   zutat: string;
   emoji: string | null;
-  status: 'linked' | 'existing' | 'new';
+  /** 'group' is a heading like "Für die Salsa:", shown without a checkbox. */
+  status: 'linked' | 'existing' | 'new' | 'group';
   staple: boolean;
   include: boolean;
 };

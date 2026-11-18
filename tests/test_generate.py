@@ -13,7 +13,8 @@ KNOWN = ["Sojasauce", "Zwiebel", "Eier", "Salz", "Mehl 405"]
 
 def prepared(*items, steps=("Tofu backen.",), portionen="2 Portionen"):
     return PreparedRecipe(
-        zutaten=[PreparedIngredient(zeile=z, zutat=n, emoji=e, immer_da=s) for z, n, e, s in items],
+        zutaten=[PreparedIngredient(zeile=z, zutat=n, emoji=e, immer_da=s, gruppe=bool(rest and rest[0]))
+                 for z, n, e, s, *rest in items],
         schritte=list(steps),
         portionen=portionen,
     )
@@ -56,6 +57,25 @@ async def test_prepare_matches_ingredients_and_preselects():
     assert result["servings"] == "2 Portionen" and result["minutes"] == 30
     assert result["steps"] == ["Tofu backen."]
     assert result["source"] == "https://example.com/tofu"
+
+
+async def test_prepare_keeps_group_headings_unlinked():
+    """Jamie Oliver lists "Pineapple salsa" and "Guacamole" between the ingredients."""
+    llm = FakeLLM(prepared(
+        ("4 große Weizentortillas", "Tortillas", "🫓", False),
+        ("Für die Ananas-Salsa", "", "", False, True),
+        ("½ TL schwarze Senfsaat", "Senfsaat", "🌱", False),
+        ("Guacamole:", "", "", False, True),
+    ))
+    draft = RecipeDraft(name="Quesadillas", url="https://example.com/q", ingredients=["x"])
+    result = (await prepare(draft, llm, KNOWN, linked=[])).as_json()
+    rows = [(i["line"], i["status"], i["include"], i["name"]) for i in result["ingredients"]]
+    assert rows == [
+        ("4 große Weizentortillas", "new", True, "große Weizentortillas"),
+        ("Für die Ananas-Salsa:", "group", False, "Für die Ananas-Salsa"),
+        ("½ TL schwarze Senfsaat", "new", True, "schwarze Senfsaat"),
+        ("Guacamole:", "group", False, "Guacamole"),
+    ]
 
 
 JSONLD_PAGE = """<html><head><script type="application/ld+json">
