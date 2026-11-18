@@ -251,6 +251,7 @@ def test_clipped_page_with_intro_tips_and_step_labels():
         block("heading_2", "Ingredients"),
         block("paragraph", "The easiest meal in less than 10 mins. The tahini and chilli oil make the broth."),
         *paragraphs("1 Tbsp Tahini", "1 Pak Choi", kind="bulleted_list_item"),
+        block("bulleted_list_item", "600g mixed green veg, such as courgettes, fennel, tenderstem broccoli, peas."),
         block("heading_3", "Top Tip"),
         block("paragraph", "That, my friend, is a smoke float. Find yourself a little metal bowl and some charcoal."),
         block("heading_3", "Methods"),
@@ -261,6 +262,8 @@ def test_clipped_page_with_intro_tips_and_step_labels():
     assert content["ingredients"] == [
         {"name": "Tahini", "amount": "1 Tbsp", "emoji": None},
         {"name": "Pak Choi", "amount": "1", "emoji": None},
+        {"name": "mixed green veg, such as courgettes, fennel, tenderstem broccoli, peas.", "amount": "600g",
+         "emoji": None},
     ]
     assert content["steps"] == [{"text": "Bring a saucepan of water to a boil."}, {"text": "Cut your pak choi into quarters."}]
     assert [b["text"][0]["text"][:20] for b in content["blocks"]] == [

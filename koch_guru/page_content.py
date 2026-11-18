@@ -329,9 +329,11 @@ def parse_content(
                 servings = serves.group(1).strip()
                 continue
         if kind in TEXT_ITEMS and section == "ingredients":
-            lines = _lines(block)
-            if any(not _is_step(line) for line in lines):
-                add_ingredients([line for line in lines if not _is_step(line)])
+            # A long line that starts with an amount is still an ingredient
+            # ("600g mixed green veg, such as courgettes, fennel, …").
+            lines = [line for line in _lines(block) if AMOUNT.match(line) or not _is_step(line)]
+            if lines:
+                add_ingredients(lines)
                 continue
             # Sentences between the ingredients (an intro, a tip) are notes, not ingredients.
         elif kind in TEXT_ITEMS and section == "steps":
