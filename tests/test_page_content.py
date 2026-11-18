@@ -210,8 +210,8 @@ def test_marker_lines_numbered_steps_and_servings():
     assert content["steps"] == [
         {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes."},
         {"text": "Serve with rice."},
-        {"text": "ENJOY!"},
     ]
+    assert content["blocks"] == [{"type": "paragraph", "text": [{"text": "ENJOY!"}]}]
 
 
 def test_notes_pages_are_not_mistaken_for_recipes():
@@ -242,4 +242,27 @@ def test_notion_icons_and_short_forms():
         {"name": "Mehl", "amount": "250 g", "emoji": None, "icon": "https://www.notion.so/icons/grain_brown.svg"},
         {"name": "Puderzucker", "amount": "75 g", "emoji": "🍬"},
         {"name": "Salz", "amount": "1 Prise", "emoji": None},
+    ]
+
+
+def test_clipped_page_with_intro_tips_and_step_labels():
+    # Shaped like web clips in Philip's Notion (Chilli Tahini Noodles, Bilfred's garden soup).
+    blocks = [
+        block("heading_2", "Ingredients"),
+        block("paragraph", "The easiest meal in less than 10 mins. The tahini and chilli oil make the broth."),
+        *paragraphs("1 Tbsp Tahini", "1 Pak Choi", kind="bulleted_list_item"),
+        block("heading_3", "Top Tip"),
+        block("paragraph", "That, my friend, is a smoke float. Find yourself a little metal bowl and some charcoal."),
+        block("heading_3", "Methods"),
+        *paragraphs("Step 1.", "Bring a saucepan of water to a boil.", "Step 2.", "Cut your pak choi into quarters."),
+        *paragraphs("Tags", "Recipes you may like"),
+    ]
+    content = parse_content(blocks)
+    assert content["ingredients"] == [
+        {"name": "Tahini", "amount": "1 Tbsp", "emoji": None},
+        {"name": "Pak Choi", "amount": "1", "emoji": None},
+    ]
+    assert content["steps"] == [{"text": "Bring a saucepan of water to a boil."}, {"text": "Cut your pak choi into quarters."}]
+    assert [b["text"][0]["text"][:20] for b in content["blocks"]] == [
+        "The easiest meal in ", "That, my friend, is ", "Tags", "Recipes you may like",
     ]
