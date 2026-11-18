@@ -64,6 +64,7 @@ Pfeffer, Wasser und Ähnliches. Sonst false.
 5. Schreib die Schritte auf Deutsch, in derselben Reihenfolge und ohne Inhalt zu ändern. \
 Ofentemperaturen in °C.
 6. `portionen` auf Deutsch, z. B. „4 Portionen“, oder leer.
+7. Zwischenüberschriften in der Zutatenliste, etwa „Pineapple salsa“ oder „For the dressing“, bleiben eigene Zeilen, aber als Gruppe: `zeile` wie „Für die Ananas-Salsa:“, `gruppe` true, `zutat` und `emoji` leer, `immer_da` false. Bei allen anderen Zeilen ist `gruppe` false.
 """
 
 
@@ -72,6 +73,7 @@ class PreparedIngredient(BaseModel):
     zutat: str = Field(description="Die eigentliche Zutat ohne Menge und Zubereitung")
     emoji: str = Field(description="Genau ein Emoji für die Zutat")
     immer_da: bool = Field(description="true für Salz, Pfeffer, Wasser und Ähnliches")
+    gruppe: bool = Field(default=False, description="true für Zwischenüberschriften wie „Für die Salsa:“")
 
 
 class PreparedRecipe(BaseModel):
@@ -88,13 +90,17 @@ class GeneratedIngredient:
     staple: bool
     existing: str | None  # name in the ingredients database, if there is one
     linked: bool = False  # already linked to this recipe
+    group: bool = False  # a heading like "Für die Salsa:", never linked
 
     @property
     def include(self) -> bool:
         """Preselected in the preview: everything except what is always at home."""
-        return self.linked or not self.staple
+        return not self.group and (self.linked or not self.staple)
 
     def as_json(self) -> dict[str, Any]:
+        if self.group:
+            return {"line": self.line, "amount": None, "name": self.line.rstrip(":").strip(), "zutat": "",
+                    "emoji": None, "status": "group", "staple": False, "include": False}
         match = AMOUNT.match(self.line)
         return {
             "line": self.line,
@@ -199,6 +205,11 @@ async def prepare(
     for item in result.zutaten:
         line, zutat = item.zeile.strip(), item.zutat.strip()
         if not line:
+            continue
+        if item.gruppe:
+            # The colon marks the line as a group label when the page is read again.
+            items.append(GeneratedIngredient(line=line.rstrip(":").strip() + ":", zutat="", emoji=None,
+                                             staple=False, existing=None, group=True))
             continue
         existing = best_match(zutat or line, known) if (zutat or line) else None
         items.append(GeneratedIngredient(

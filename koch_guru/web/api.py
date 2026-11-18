@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from koch_guru.llm import ModelError
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.page_content import image_urls, notes_text, parse_content
@@ -191,8 +192,11 @@ async def generate_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
         )
     except RecipeImportError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except ModelError as exc:
+        log.warning("Rezept generieren: Modell ohne Antwort: %r", exc.__cause__ or exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:  # the model or a site failed in an unexpected way
-        log.warning("Rezept generieren fehlgeschlagen: %s", exc)
+        log.warning("Rezept generieren fehlgeschlagen: %r", exc, exc_info=True)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, detail="Das hat nicht geklappt. Versuch es gleich noch einmal."
         ) from exc
