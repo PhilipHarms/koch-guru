@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, Request
@@ -72,11 +73,13 @@ def create_app(
     lifespan: Lifespan | None = None,
     static_dir: Path | None = None,
     http: httpx.AsyncClient | None = None,
+    llm: Any = None,
 ) -> FastAPI:
     app = FastAPI(title="KochGuru", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.repo = repo
     # For cover photos; the server passes its shared client, tests may pass a mock.
     app.state.http = http or httpx.AsyncClient(follow_redirects=True, timeout=20)
+    app.state.llm = llm  # for recipe ideas; without it /api/suggest answers 503
     app.state.users = users
     if not users:
         log.warning("APP_USERS ist leer: Niemand kann sich in der Web-App anmelden.")

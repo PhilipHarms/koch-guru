@@ -9,11 +9,12 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.page_content import parse_content
+from koch_guru.services.recommend import recommend
 from koch_guru.web.auth import current_user, display_name
 
 log = logging.getLogger(__name__)
@@ -127,6 +128,38 @@ async def get_recipe_image(recipe_id: str, request: Request) -> Response:
         media_type=media_type,
         headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
+
+
+class Wish(BaseModel):
+    wish: str = Field(min_length=1, max_length=500)
+    # Earlier turns of this conversation, so "lieber ohne Fleisch" refers to the last answer.
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=10)
+
+
+@router.post("/suggest")
+async def suggest(wish: Wish, request: Request) -> dict[str, Any]:
+    """Recipe ideas for a wish, chosen by Claude from the collection, like in the bot."""
+    llm = request.app.state.llm
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vorschläge sind gerade nicht verfügbar")
+    recipes = await repo_of(request).list_recipes()
+    history = [
+        {"role": turn["role"], "content": turn["content"][:2000]}
+        for turn in wish.history
+        if turn.get("role") in ("user", "assistant") and turn.get("content")
+    ]
+    try:
+        result = await recommend(wish.wish.strip(), recipes, llm, history=history)
+    except Exception as exc:  # the model or OpenRouter failed; the app shows a short note
+        log.warning("Vorschläge fehlgeschlagen: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="KochGuru hat gerade keine Antwort. Versuch es gleich noch einmal."
+        ) from exc
+    return {
+        "message": result.message,
+        "suggestions": [{"recipe": recipe_json(s.recipe), "reason": s.reason} for s in result.suggestions],
+        "history_entry": result.as_history(),
+    }
 
 
 class RecipeUpdate(BaseModel):

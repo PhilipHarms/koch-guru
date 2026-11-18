@@ -90,6 +90,7 @@ Jede Person hat einen eigenen Anmeldelink `https://<adresse>/login/<schlüssel>`
 | `GET /api/recipes/{id}/image` | Titelbild der Notion-Seite, über den Server gereicht, damit das Handy es zwischenspeichern kann |
 | `PATCH /api/recipes/{id}` | `{"this_week": true}` setzt oder entfernt das Rezept auf der Wochenliste |
 | `POST /api/week/clear` | Wochenliste leeren |
+| `POST /api/suggest` | `{"wish": "…", "history": […]}`: Rezeptideen von Claude aus der eigenen Sammlung, wie im Bot |
 | `GET /healthz` | Lebenszeichen ohne Anmeldung |
 
 Ohne gültiges Cookie antworten alle `/api`-Aufrufe mit 401. Fehler von Notion kommen als 502, Überlastung (429 bei Notion) als 503 mit `Retry-After`.

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { LocationProvider, Route, Router, useLocation } from 'preact-iso';
 import { api, NotSignedIn, type Me, type Recipe } from './lib/api';
-import { DataContext, useData, type AppData } from './lib/data';
+import { DataContext, type AppData } from './lib/data';
 import { noteNavigation } from './lib/nav';
 import { TabBar } from './components/TabBar';
 import { RecipesRoute } from './pages/Recipes';
 import { RecipeRoute } from './pages/Recipe';
 import { WeekRoute } from './pages/Week';
+import { TodayRoute } from './pages/Today';
 import { PlaceholderPage } from './pages/Placeholder';
 import { BrandScreen } from './pages/Status';
 
@@ -18,11 +19,6 @@ type State =
 
 // Route components live outside App, so that a data update re-renders them instead of
 // mounting them anew (which would reload a recipe page and lose its state).
-function HomeRoute() {
-  const { me } = useData();
-  return <PlaceholderPage title={`Hallo ${me.name}`} text="Hier stehen bald die Suche, ein Vorschlag für heute und eure Wochenliste." />;
-}
-
 function ShoppingRoute() {
   return <PlaceholderPage title="Einkaufsliste" text="Die Einkaufsliste kommt, sobald die Zutaten-Datenbank angebunden ist." />;
 }
@@ -81,7 +77,7 @@ export function App() {
         <NavigationCounter />
         <div class="app">
           <Router>
-            <Route path="/" component={HomeRoute} />
+            <Route path="/" component={TodayRoute} />
             <Route path="/rezepte" component={RecipesRoute} />
             <Route path="/rezepte/:id" component={RecipeRoute} />
             <Route path="/woche" component={WeekRoute} />
