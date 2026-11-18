@@ -46,9 +46,15 @@ def page(i, name, link=None, tags=(), origin=(), ingredients=(), this_week=False
     }
 
 
-def ingredient_page(page_id, name):
+def ingredient_page(page_id, name, bought=False):
     return {"object": "page", "id": page_id, "icon": {"type": "emoji", "emoji": f"E{page_id[-1]}"},
-            "properties": {"Name": {"type": "title", "title": text(name)}}}
+            "properties": {"Name": {"type": "title", "title": text(name)},
+                           "Bought": {"type": "checkbox", "checkbox": bought}}}
+
+
+# Schema of Philip's ingredients database before the app added its fields
+INGREDIENT_SCHEMA = {"Name": {"type": "title"}, "Bought": {"type": "checkbox"},
+                     "Rezepte": {"type": "relation", "relation": {"data_source_id": DS_ID}}}
 
 
 def test_mapping_for_philips_schema():
@@ -127,6 +133,10 @@ class FakeNotion:
         self.block_calls = []
         self.appended = []
         self.reject_ingredients = False
+        self.ingredient_schema = dict(INGREDIENT_SCHEMA)
+        self.schema_updates = []
+        self.reject_schema_updates = False
+        self.bought = {"ing-2"}
 
     @staticmethod
     def error(status, code):
@@ -147,12 +157,22 @@ class FakeNotion:
             if not self.database_exists:
                 return self.error(404, "object_not_found")
             return httpx.Response(200, json={"object": "database", "data_sources": [{"id": DS_ID, "name": "Rezepte"}]})
+        if path == f"/v1/data_sources/{ING_DS}" and request.method == "GET":
+            return httpx.Response(200, json={"object": "data_source", "properties": self.ingredient_schema})
+        if path == f"/v1/data_sources/{ING_DS}" and request.method == "PATCH":
+            if self.reject_schema_updates:
+                return self.error(403, "restricted_resource")
+            body = json.loads(request.content)
+            self.schema_updates.append(body)
+            for name, prop in body["properties"].items():
+                self.ingredient_schema[name] = {"type": next(iter(prop))}
+            return httpx.Response(200, json={"object": "data_source", "properties": self.ingredient_schema})
         if path in (f"/v1/data_sources/{DS_ID}", f"/v1/data_sources/{DB_UUID}"):
             return httpx.Response(200, json={"object": "data_source", "properties": SCHEMA})
         if path == f"/v1/data_sources/{ING_DS}/query":
             if not self.ingredients_shared:
                 return self.error(404, "object_not_found")
-            return self.paginate([ingredient_page(k, v) for k, v in INGREDIENTS.items()], request)
+            return self.paginate([ingredient_page(k, v, k in self.bought) for k, v in INGREDIENTS.items()], request)
         if path.startswith("/v1/blocks/") and path.endswith("/children") and request.method == "GET":
             block_id = path.split("/")[3]
             self.block_calls.append(block_id)
@@ -464,3 +484,66 @@ async def test_save_generated_reports_links_it_could_not_set():
     draft = RecipeDraft(name="Rezept 000", ingredients=["1 Süßkartoffel"], steps=["Kochen."])
     assert await repo.save_generated("page-0", draft=draft, link=[("Süßkartoffel", None)]) == ["Süßkartoffel"]
     assert len(fake.appended) == 1
+
+
+async def test_shopping_fields_are_created_once_and_ingredients_carry_their_state():
+    fake = FakeNotion(total=3)
+    repo = make_repo(fake)
+    recipes = await repo.list_recipes()
+    assert fake.schema_updates == [{"properties": {"Gekauft am": {"date": {}}, "Extra": {"checkbox": {}}}}]
+    assert (repo.ingredient_fields.bought, repo.ingredient_fields.bought_on, repo.ingredient_fields.extra) == (
+        "Bought", "Gekauft am", "Extra")
+    assert recipes[0].ingredient_ids == ("ing-1", "ing-2")
+    assert [(i.name, i.bought, i.icon) for i in repo.ingredients.values()] == [
+        ("Gelbe Linsen", False, "E1"), ("Kurkuma", True, "E2"), ("Süßkartoffel", False, "E3")]
+    await repo.list_recipes(force_refresh=True)
+    assert len(fake.schema_updates) == 1  # checked once per start
+
+
+async def test_existing_fields_are_found_in_any_letter_case():
+    fake = FakeNotion(total=1)
+    fake.ingredient_schema |= {"gekauft am": {"type": "date"}, "EXTRA": {"type": "checkbox"}}
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    assert fake.schema_updates == []
+    assert (repo.ingredient_fields.bought_on, repo.ingredient_fields.extra) == ("gekauft am", "EXTRA")
+
+
+async def test_without_schema_access_the_list_still_loads():
+    fake = FakeNotion(total=1)
+    fake.reject_schema_updates = True
+    repo = make_repo(fake)
+    assert len(await repo.list_recipes()) == 1
+    assert repo.ingredient_fields.bought == "Bought"
+    assert repo.ingredient_fields.bought_on is None and repo.ingredient_fields.extra is None
+
+
+async def test_set_bought_ticks_and_unticks_with_date():
+    fake = FakeNotion(total=1)
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    ticked = await repo.set_bought("ing-1", True, today="2026-11-18")
+    assert (ticked.bought, ticked.bought_on) == (True, "2026-11-18")
+    assert fake.updates[-1] == ("ing-1", {"properties": {
+        "Bought": {"checkbox": True}, "Gekauft am": {"date": {"start": "2026-11-18"}}}})
+    back = await repo.set_bought("ing-1", False, today="2026-11-18")
+    assert (back.bought, back.bought_on) == (False, None)
+    assert fake.updates[-1][1]["properties"]["Gekauft am"] == {"date": None}
+    assert repo.ingredients["ing-1"].bought is False
+
+
+async def test_add_extra_creates_or_reuses_an_ingredient():
+    fake = FakeNotion(total=1)
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    new = await repo.add_extra("Spülmittel")
+    created = fake.created[-1]
+    assert created["parent"] == {"type": "data_source_id", "data_source_id": ING_DS}
+    assert created["properties"]["Name"]["title"][0]["text"]["content"] == "Spülmittel"
+    assert created["properties"]["Extra"] == {"checkbox": True}
+    assert (new.name, new.extra, repo.ingredients[new.id].extra) == ("Spülmittel", True, True)
+
+    again = await repo.add_extra("kurkuma")  # bought already: back on the list
+    assert again.id == "ing-2" and again.extra and not again.bought
+    assert fake.updates[-1] == ("ing-2", {"properties": {
+        "Extra": {"checkbox": True}, "Bought": {"checkbox": False}, "Gekauft am": {"date": None}}})

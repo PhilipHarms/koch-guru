@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -18,6 +19,7 @@ from koch_guru.page_content import image_urls, notes_text, parse_content
 from koch_guru.services.generate import generate
 from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import recommend
+from koch_guru.services.shopping import amounts_from_content, item_json, shopping_list, today
 from koch_guru.web.auth import current_user, display_name
 
 log = logging.getLogger(__name__)
@@ -258,3 +260,75 @@ async def clear_week(request: Request) -> dict[str, int]:
     if not repo.supports_this_week:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Datenbank hat keine Wochenliste")
     return {"cleared": await repo.clear_this_week()}
+
+
+# --- Shopping list ---------------------------------------------------------------------
+
+CONTENT_REQUESTS = asyncio.Semaphore(2)  # Notion allows about 3 requests per second
+
+
+async def week_amounts(repo: RecipeRepository, recipes: list[Recipe]) -> dict[str, dict[str, str]]:
+    """Recipe id -> {ingredient name: amount} from the recipe pages. Pages are cached by the repo."""
+
+    async def one(recipe: Recipe) -> tuple[str, dict[str, str]]:
+        try:
+            async with CONTENT_REQUESTS:
+                blocks = await repo.page_blocks(recipe.id)
+        except Exception as exc:  # amounts are a bonus; the list works without them
+            log.warning("Mengen für %r nicht gelesen: %r", recipe.name, exc)
+            return recipe.id, {}
+        content = parse_content(blocks, ingredients=recipe.ingredients, icon_by_name=repo.ingredient_icons)
+        return recipe.id, amounts_from_content(content, recipe.ingredients)
+
+    return dict(await asyncio.gather(*(one(r) for r in recipes if r.ingredients)))
+
+
+@router.get("/shopping-list")
+async def get_shopping_list(request: Request) -> dict[str, Any]:
+    """Ingredients of the recipes of the week, grouped by recipe, plus own items."""
+    repo = repo_of(request)
+    recipes = [r for r in await repo.list_recipes() if r.this_week]
+    fields = repo.ingredient_fields
+    return shopping_list(
+        recipes,
+        repo.ingredients,
+        await week_amounts(repo, recipes),
+        today=today(),
+        can_check=bool(fields.bought),
+        can_add=bool(fields.extra),
+    )
+
+
+class IngredientUpdate(BaseModel):
+    bought: bool
+
+
+@router.patch("/ingredients/{ingredient_id}")
+async def update_ingredient(ingredient_id: str, update: IngredientUpdate, request: Request) -> dict[str, Any]:
+    """Tick an ingredient off the shopping list, or put it back."""
+    repo = repo_of(request)
+    await repo.list_recipes()  # loads the ingredients after a restart
+    wanted = ingredient_id.replace("-", "")
+    found = next((i for i in repo.ingredients if i.replace("-", "") == wanted), None)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Zutat nicht gefunden")
+    if not repo.ingredient_fields.bought:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Zutaten-Datenbank hat keine Checkbox „Bought“.")
+    return item_json(await repo.set_bought(found, update.bought, today=today()))
+
+
+class ExtraItem(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+@router.post("/extras")
+async def add_extra(item: ExtraItem, request: Request) -> dict[str, Any]:
+    """Put an own item, e.g. washing-up liquid, on the shopping list."""
+    repo = repo_of(request)
+    name = " ".join(item.name.split())
+    if not name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Bitte gib einen Namen ein.")
+    await repo.list_recipes()
+    if not repo.ingredient_fields.extra:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Eigene Artikel gehen erst, wenn es das Feld „Extra“ gibt.")
+    return item_json(await repo.add_extra(name))

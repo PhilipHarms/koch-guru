@@ -7,7 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from notion_client import APIErrorCode, APIResponseError
 
-from koch_guru.models import Recipe
+from koch_guru.models import Ingredient, Recipe
+from koch_guru.notion_repo import IngredientFields
 from koch_guru.web.app import create_app
 from koch_guru.web.auth import COOKIE_NAME, user_for_key
 from koch_guru.web.keys import make_app_users
@@ -25,13 +26,30 @@ class FakeRepo:
         self.recipes = [
             Recipe(id=DAL_ID, name="Kürbis-Dal", notion_url="https://notion.so/dal",
                    url="https://example.com/dal", tags=("Veggie",), origin=("Green Feast",),
-                   ingredients=("Kürbis", "Linsen"), this_week=True, emoji="🍛",
+                   ingredients=("Kürbis", "Linsen"), ingredient_ids=("i-kuerbis", "i-linsen"),
+                   this_week=True, emoji="🍛",
                    created="2026-11-01T10:00:00.000Z"),
             Recipe(id=PASTA_ID, name="Pasta e ceci", notion_url="https://notion.so/pasta"),
         ]
         self.supports_this_week = week_supported
         self.error = error
         self.updates = []
+        self.ingredients = {i.id: i for i in [
+            Ingredient("i-kuerbis", "Kürbis", icon="🎃"),
+            Ingredient("i-linsen", "Linsen", bought=True, bought_on="2026-11-01"),
+            Ingredient("i-salz", "Salz"),
+        ]}
+        self.ingredient_fields = IngredientFields(bought="Bought", bought_on="Gekauft am", extra="Extra")
+
+    async def set_bought(self, ingredient_id, value, *, today):
+        self.ingredients[ingredient_id] = dataclasses.replace(
+            self.ingredients[ingredient_id], bought=value, bought_on=today if value else None)
+        return self.ingredients[ingredient_id]
+
+    async def add_extra(self, name):
+        added = Ingredient(f"i-{name.lower()}", name, extra=True)
+        self.ingredients[added.id] = added
+        return added
 
     async def list_recipes(self, *, force_refresh=False):
         if self.error:
@@ -351,3 +369,41 @@ def test_generate_errors():
     pasta = signed_in(llm=GenerateLLM()).post(f"/api/recipes/{PASTA_ID}/generate")  # no link, no photos
     assert pasta.status_code == 422 and "weder einen Link" in pasta.json()["detail"]
     assert client(llm=GenerateLLM()).post(f"/api/recipes/{DAL_ID}/generate").status_code == 401
+
+
+def test_shopping_list_groups_week_recipes_with_amounts():
+    repo = FakeRepo()
+    data = signed_in(repo).get("/api/shopping-list").json()
+    (group,) = data["groups"]
+    assert group["recipe_id"] == DAL_ID
+    assert [(i["name"], i["amount"], i["done"], i["icon"]) for i in group["items"]] == [
+        ("Kürbis", "500 g", False, "🎃"),  # amount from the recipe page
+        ("Linsen", None, True, None),
+    ]
+    assert data["open"] == 1 and data["extras"] == []
+    assert data["can_check"] and data["can_add"]
+
+
+def test_tick_off_and_add_own_items():
+    repo = FakeRepo()
+    c = signed_in(repo)
+    ticked = c.patch("/api/ingredients/i-kuerbis", json={"bought": True}).json()
+    assert ticked["id"] == "i-kuerbis" and ticked["done"] is True
+    assert repo.ingredients["i-kuerbis"].bought_on is not None
+    assert c.patch("/api/ingredients/i-nix", json={"bought": True}).status_code == 404
+
+    added = c.post("/api/extras", json={"name": "  Spül   mittel "}).json()
+    assert added["name"] == "Spül mittel" and added["done"] is False
+    assert [e["name"] for e in c.get("/api/shopping-list").json()["extras"]] == ["Spül mittel"]
+    assert c.post("/api/extras", json={"name": "   "}).status_code == 422
+
+
+def test_shopping_list_without_the_fields():
+    repo = FakeRepo()
+    repo.ingredient_fields = IngredientFields()
+    c = signed_in(repo)
+    data = c.get("/api/shopping-list").json()
+    assert data["can_check"] is False and data["can_add"] is False
+    assert c.patch("/api/ingredients/i-kuerbis", json={"bought": True}).status_code == 409
+    assert c.post("/api/extras", json={"name": "Spülmittel"}).status_code == 409
+    assert client().get("/api/shopping-list").status_code == 401
