@@ -1,0 +1,176 @@
+import { useMemo, useState } from 'preact/hooks';
+import type { Recipe } from '../lib/api';
+import { load, save } from '../lib/storage';
+import { fold, hostOf } from '../lib/text';
+import { tagStyle } from '../lib/tiles';
+import { RecipeImage } from '../components/RecipeImage';
+import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, SucheIcon } from '../components/icons';
+
+type View = 'kacheln' | 'liste';
+type Sort = 'neu' | 'name';
+const SORT_LABEL: Record<Sort, string> = { neu: 'Neu hinzugefügt', name: 'Name' };
+
+/** Where a recipe comes from: cookbook (Origin), else the website, else our own. */
+export function sourceOf(recipe: Recipe): string {
+  return recipe.origin[0] || hostOf(recipe.source_url) || 'Eigenes Rezept';
+}
+
+type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
+
+function buildChips(recipes: Recipe[]): Chip[] {
+  const count = (values: string[]) => {
+    const counts = new Map<string, number>();
+    for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'));
+  };
+  const tags = count(recipes.flatMap((r) => r.tags)).map(([tag]) => ({
+    key: `tag:${tag}`,
+    label: tag,
+    emoji: tagStyle(tag)?.chip,
+    matches: (r: Recipe) => r.tags.includes(tag),
+  }));
+  // Cookbooks and sources only when at least two recipes share them.
+  const origins = count(recipes.flatMap((r) => r.origin))
+    .filter(([, n]) => n >= 2)
+    .map(([origin]) => ({
+      key: `origin:${origin}`,
+      label: origin,
+      matches: (r: Recipe) => r.origin.includes(origin),
+    }));
+  return [...tags, ...origins];
+}
+
+function matchesQuery(recipe: Recipe, words: string[]): boolean {
+  if (!words.length) return true;
+  const haystack = fold([recipe.name, ...recipe.ingredients, ...recipe.origin, ...recipe.tags].join(' '));
+  return words.every((word) => haystack.includes(word));
+}
+
+function RecipeCard({ recipe }: { recipe: Recipe }) {
+  const tag = recipe.tags.map(tagStyle).find(Boolean);
+  return (
+    <a class="kg-karte" href={recipe.link} target="_blank" rel="noopener noreferrer">
+      <RecipeImage recipe={recipe} size="karte">
+        {tag && (
+          <div class="kg-bild-oben kg-tags">
+            <span class={`kg-tag ${tag.className}`}>{tag.label}</span>
+          </div>
+        )}
+      </RecipeImage>
+      <span class="titel-karte">{recipe.name}</span>
+      <span class="quelle kg-karte-quelle">{sourceOf(recipe)}</span>
+    </a>
+  );
+}
+
+function RecipeRow({ recipe }: { recipe: Recipe }) {
+  return (
+    <li>
+      <a class="kg-zeile" href={recipe.link} target="_blank" rel="noopener noreferrer">
+        <RecipeImage recipe={recipe} size="liste" />
+        <span class="kg-zeile-text">
+          <span class="titel-karte">{recipe.name}</span>
+          <span class="meta">{sourceOf(recipe)}</span>
+        </span>
+      </a>
+    </li>
+  );
+}
+
+export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [view, setView] = useState<View>(() => load('ansicht', ['kacheln', 'liste'] as const, 'kacheln'));
+  const [sort, setSort] = useState<Sort>(() => load('sortierung', ['neu', 'name'] as const, 'neu'));
+
+  const chips = useMemo(() => buildChips(recipes), [recipes]);
+
+  const shown = useMemo(() => {
+    const words = fold(query).split(/\s+/).filter(Boolean);
+    const active = chips.filter((chip) => selected.includes(chip.key));
+    const list = recipes.filter((r) => matchesQuery(r, words) && active.every((chip) => chip.matches(r)));
+    return sort === 'name'
+      ? [...list].sort((a, b) => a.name.localeCompare(b.name, 'de'))
+      : [...list].sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  }, [recipes, query, selected, chips, sort]);
+
+  const chooseView = (next: View) => {
+    setView(next);
+    save('ansicht', next);
+  };
+  const toggleSort = () => {
+    const next: Sort = sort === 'neu' ? 'name' : 'neu';
+    setSort(next);
+    save('sortierung', next);
+  };
+  const toggleChip = (key: string) =>
+    setSelected((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
+
+  return (
+    <main class="page">
+      <header class="page-header">
+        <h1 class="titel-seite">Rezepte</h1>
+        <p class="text-klein page-summary" aria-live="polite">
+          {shown.length === recipes.length ? `${recipes.length} Rezepte` : `${shown.length} von ${recipes.length} Rezepten`}
+        </p>
+      </header>
+
+      <div class="page-pad">
+        <label class="kg-search" for="suche">
+          <SucheIcon />
+          <span class="kg-sr">Rezepte durchsuchen</span>
+          <input id="suche" type="search" placeholder="Name oder Zutat, z. B. Kürbis" value={query}
+            onInput={(e) => setQuery((e.target as HTMLInputElement).value)} autocomplete="off" />
+          {query && (
+            <button type="button" class="search-clear" aria-label="Suche leeren" onClick={() => setQuery('')}>
+              <KreuzIcon size={18} />
+            </button>
+          )}
+        </label>
+      </div>
+
+      {chips.length > 0 && (
+        <div class="kg-chips chips-row" role="group" aria-label="Kategorien">
+          <button type="button" class="kg-chip" aria-pressed={selected.length === 0} onClick={() => setSelected([])}>
+            Alle
+          </button>
+          {chips.map((chip) => (
+            <button type="button" class="kg-chip" key={chip.key} aria-pressed={selected.includes(chip.key)}
+              onClick={() => toggleChip(chip.key)}>
+              {chip.emoji && <span aria-hidden="true">{chip.emoji}</span>}
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div class="page-pad toolbar">
+        <button type="button" class="sort-button" onClick={toggleSort}>
+          <span class="meta">Sortiert nach</span>
+          {SORT_LABEL[sort]}
+          <AufklappenIcon size={18} />
+        </button>
+        <div class="kg-seg" role="group" aria-label="Ansicht">
+          <button type="button" aria-pressed={view === 'kacheln'} aria-label="Kachelansicht" onClick={() => chooseView('kacheln')}>
+            <KachelnIcon size={20} />
+          </button>
+          <button type="button" aria-pressed={view === 'liste'} aria-label="Listenansicht" onClick={() => chooseView('liste')}>
+            <ListeIcon size={20} />
+          </button>
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        <p class="page-pad empty">Nichts gefunden. Probier einen anderen Begriff oder weniger Filter.</p>
+      ) : view === 'kacheln' ? (
+        <div class="kg-raster page-pad">
+          {shown.map((r) => <RecipeCard recipe={r} key={r.id} />)}
+        </div>
+      ) : (
+        <ul class="kg-liste page-pad">
+          {shown.map((r) => <RecipeRow recipe={r} key={r.id} />)}
+        </ul>
+      )}
+    </main>
+  );
+}

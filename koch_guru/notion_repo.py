@@ -160,6 +160,7 @@ def page_to_recipe(
         ingredients=ingredients,
         this_week=bool((props.get(mapping.this_week) or {}).get("checkbox")) if mapping.this_week else False,
         emoji=_page_emoji(page),
+        created=page.get("created_time"),
     )
 
 

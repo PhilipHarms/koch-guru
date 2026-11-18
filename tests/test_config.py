@@ -53,6 +53,7 @@ def test_app_users_and_port():
     assert s.app_users == {KEY_A: "philip", KEY_B: "charlotte"}
     assert s.port == 8080
     assert load_settings(BASE).app_users == {} and load_settings(BASE).port == 8000
+    assert s.app_users_error is None
 
 
 @pytest.mark.parametrize("raw", [
@@ -63,10 +64,11 @@ def test_app_users_and_port():
     f"philip:{KEY_A},charlotte:{KEY_A}",  # same key twice
     f"philip:{KEY_A},philip:{KEY_B}",     # same name twice
 ])
-def test_invalid_app_users(raw):
-    with pytest.raises(ConfigError) as exc:
-        load_settings({**BASE, "APP_USERS": raw})
-    assert KEY_A not in str(exc.value)  # never echo a secret into the logs
+def test_invalid_app_users_disable_web_login_but_keep_the_bot_running(raw):
+    s = load_settings({**BASE, "APP_USERS": raw})
+    assert s.app_users == {}
+    assert s.app_users_error and s.app_users_error.startswith("APP_USERS")
+    assert KEY_A not in s.app_users_error  # never echo a secret into the logs
 
 
 def test_invalid_port():

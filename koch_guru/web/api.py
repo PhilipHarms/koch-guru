@@ -26,6 +26,7 @@ def recipe_json(recipe: Recipe) -> dict[str, Any]:
         "ingredients": list(recipe.ingredients),
         "this_week": recipe.this_week,
         "emoji": recipe.emoji,
+        "created": recipe.created,
     }
 
 

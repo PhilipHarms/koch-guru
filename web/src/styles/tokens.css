@@ -1,0 +1,94 @@
+/* KochGuru — generated from tokens.json */
+:root, [data-theme="hell"] {
+  --surface: #ffffff;
+  --surface-cream: #fff4ea;
+  --surface-warm: #fff8f2;
+  --surface-backdrop: #f4efea;
+  --scrim: #6b625c;
+  --ink: #221b16;
+  --ink-soft: #4a423c;
+  --ink-muted: #6e645c;
+  --ink-done: #756b63;
+  --line: #efe6de;
+  --line-strong: #e5dbd2;
+  --brand: #c2501e;
+  --on-brand: #ffffff;
+  --brand-bright: #e8602a;
+  --brand-text: #b9481a;
+  --brand-text-hover: #8f3713;
+  --brand-soft: #fff0e4;
+  --brand-line: #f2c9b3;
+  --focus: var(--brand-text);
+  --success: #2f6b1f;
+  --success-soft: #eef6e7;
+  --success-line: #cfe5bf;
+  --star: #e8a21b;
+  --star-empty: #998b7f;
+  --progress-track: #eadfd5;
+  --tag-zeit-bg: #fcebb0;
+  --tag-zeit-ink: #4a3a0c;
+  --tag-veggie-bg: #ddf0ce;
+  --tag-veggie-ink: #24481a;
+  --tag-winter-bg: #dceaf6;
+  --tag-winter-ink: #1d3a57;
+  --tag-neu-bg: #ffe0cc;
+  --tag-neu-ink: #7a3210;
+  --tile-gruen: #e4efd9;
+  --tile-gelb: #fbefc8;
+  --tile-flieder: #eee6f6;
+  --tile-blau: #deebf6;
+  --tile-pfirsich: #fde3d2;
+  --foto-platzhalter: #cfb8a1;
+  --foto-platzhalter-ink: #3a2c20;
+  --shadow-fab: 0 6px 18px rgba(184, 72, 26, 0.35);
+  --shadow-raised: 0 2px 10px rgba(34, 27, 22, 0.12);
+  --shadow-soft: 0 2px 10px rgba(34, 27, 22, 0.08);
+  --shadow-segment: 0 1px 4px rgba(34, 27, 22, 0.1);
+}
+:root {
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-28: 28px;
+  --radius-thumb: 14px;
+  --radius-tile: 16px;
+  --radius-field: 18px;
+  --radius-card: 20px;
+  --radius-hero: 24px;
+  --radius-pill: 999px;
+  --size-touch: 44px;
+  --size-chip: 40px;
+  --size-search: 56px;
+  --size-button-gross: 58px;
+  --size-fab: 60px;
+  --size-tile-woche: 76px;
+  --size-nav: 84px;
+  --size-kartenbild: 200px;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+.titel-seite { font-family: var(--font-display); font-size: 34px; font-weight: 600; letter-spacing: -0.01em; }
+.titel-heute { font-family: var(--font-display); font-size: 32px; font-weight: 600; line-height: 1.1; letter-spacing: -0.01em; }
+.titel-rezept { font-family: var(--font-display); font-size: 30px; font-weight: 600; line-height: 1.12; letter-spacing: -0.01em; }
+.kochschritt { font-family: var(--font-display); font-size: 30px; font-weight: 500; line-height: 1.28; letter-spacing: -0.005em; }
+.titel-sheet { font-family: var(--font-display); font-size: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.titel-vorschau { font-family: var(--font-display); font-size: 24px; font-weight: 600; }
+.abschnitt { font-family: var(--font-sans); font-size: 22px; font-weight: 700; }
+.titel-block { font-family: var(--font-sans); font-size: 18px; font-weight: 700; }
+.eingabe { font-family: var(--font-sans); font-size: 17px; font-weight: 400; }
+.fliesstext { font-family: var(--font-sans); font-size: 16px; font-weight: 400; line-height: 1.5; }
+.titel-karte { font-family: var(--font-sans); font-size: 16px; font-weight: 600; line-height: 1.3; }
+.button-label { font-family: var(--font-sans); font-size: 15px; font-weight: 600; }
+.text-klein { font-family: var(--font-sans); font-size: 15px; font-weight: 400; line-height: 1.45; }
+.meta { font-family: var(--font-sans); font-size: 14px; font-weight: 400; }
+.quelle { font-family: var(--font-sans); font-size: 14px; font-weight: 600; }
+.overline { font-family: var(--font-sans); font-size: 14px; font-weight: 700; letter-spacing: 0.06em; }
+.badge-zahl { font-family: var(--font-sans); font-size: 13px; font-weight: 700; }
+.tag-label { font-family: var(--font-sans); font-size: 12px; font-weight: 600; }
+.tab-label { font-family: var(--font-sans); font-size: 12px; font-weight: 500; }

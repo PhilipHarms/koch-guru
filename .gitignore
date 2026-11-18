@@ -20,3 +20,8 @@ venv/
 # Tooling
 .pytest_cache/
 .ruff_cache/
+
+# Front end
+web/node_modules/
+# Built front end is committed until the Docker build takes over
+!web/dist/

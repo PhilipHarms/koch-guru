@@ -79,6 +79,12 @@ def test_page_emoji_icon_becomes_recipe_emoji():
     assert page_to_recipe(page(7, "Suppe"), mapping).emoji is None
 
 
+def test_created_time_is_kept_for_sorting():
+    mapping = resolve_mapping(SCHEMA, PropertyNames())
+    created = page(8, "Dal") | {"created_time": "2026-11-01T10:00:00.000Z"}
+    assert page_to_recipe(created, mapping).created == "2026-11-01T10:00:00.000Z"
+
+
 def test_page_to_recipe_resolves_relations_and_reads_all_fields():
     mapping = resolve_mapping(SCHEMA, PropertyNames())
     p = page(1, ["Sweet Potatoes, ", "Lentils"], "https://x.de/a_b", ["Veggie", "Winter"],
