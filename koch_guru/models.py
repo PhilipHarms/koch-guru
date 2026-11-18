@@ -15,6 +15,7 @@ class Recipe:
     origin: tuple[str, ...] = ()  # cookbook or source
     ingredients: tuple[str, ...] = ()
     this_week: bool = False  # on the "This Week?" list
+    emoji: str | None = None  # page icon, shown when there is no photo
 
     @property
     def short_id(self) -> str:

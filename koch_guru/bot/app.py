@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-from notion_client import AsyncClient
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
@@ -19,8 +17,7 @@ from telegram.ext import (
 from koch_guru.bot import handlers
 from koch_guru.bot.render import IMPORT_CALLBACK_PREFIX, WEEK_CALLBACK_PREFIX
 from koch_guru.config import Settings, load_settings
-from koch_guru.llm import LLMClient
-from koch_guru.notion_repo import RecipeRepository
+from koch_guru.core import Core, build_core
 
 log = logging.getLogger(__name__)
 
@@ -34,39 +31,50 @@ COMMANDS = [
 ]
 
 
-def build_application(settings: Settings) -> Application:
-    notion = AsyncClient(auth=settings.notion_token)
-    repo = RecipeRepository(
-        notion,
-        settings.notion_database_id,
-        settings.properties,
-        cache_seconds=settings.recipe_cache_seconds,
-    )
-    llm = LLMClient.for_openrouter(settings.openrouter_api_key, settings.model)
-    http = httpx.AsyncClient(follow_redirects=True, timeout=20)
+def build_application(settings: Settings, core: Core | None = None) -> Application:
+    """Telegram application on top of the shared core.
 
-    async def post_init(app: Application) -> None:
-        await repo.connect()
-        await app.bot.set_my_commands(COMMANDS)
-        log.info("Modell über OpenRouter: %s", llm.model)
+    Without `core` the bot runs on its own (`run_polling`) and starts and closes
+    its own core. With `core` the caller owns the lifecycle: the web server starts
+    the core once and then the bot with `start_bot` / `stop_bot`.
+    """
+    standalone = core is None
+    core = core or build_core(settings)
 
-    async def post_shutdown(app: Application) -> None:
-        await notion.aclose()
-        await llm.close()
-        await http.aclose()
+    builder = ApplicationBuilder().token(settings.telegram_token)
+    if standalone:
+        async def post_init(app: Application) -> None:
+            await core.start()
+            await app.bot.set_my_commands(COMMANDS)
 
-    app = (
-        ApplicationBuilder()
-        .token(settings.telegram_token)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+        async def post_shutdown(app: Application) -> None:
+            await core.aclose()
+
+        builder = builder.post_init(post_init).post_shutdown(post_shutdown)
+
+    app = builder.build()
     app.bot_data["services"] = handlers.Services(
-        repo=repo, llm=llm, allowed_user_ids=settings.allowed_user_ids, http=http
+        repo=core.repo, llm=core.llm, allowed_user_ids=settings.allowed_user_ids, http=core.http
     )
     register_handlers(app, settings.allowed_user_ids)
     return app
+
+
+async def start_bot(app: Application) -> None:
+    """Start polling inside an already running event loop (used by the web server)."""
+    await app.initialize()
+    await app.bot.set_my_commands(COMMANDS)
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    log.info("Telegram-Bot läuft.")
+
+
+async def stop_bot(app: Application) -> None:
+    if app.updater and app.updater.running:
+        await app.updater.stop()
+    if app.running:
+        await app.stop()
+    await app.shutdown()
 
 
 def register_handlers(app: Application, allowed_user_ids: frozenset[int]) -> None:
@@ -102,14 +110,18 @@ def register_handlers(app: Application, allowed_user_ids: frozenset[int]) -> Non
     app.add_error_handler(handlers.on_error)
 
 
-def run() -> None:
+def configure_logging() -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
     )
     # httpx logs every Telegram poll at INFO, which drowns everything else.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
+
+def run() -> None:
+    """Bot only, without the web app (handy for local tests with a second bot token)."""
+    configure_logging()
     settings = load_settings()
     app = build_application(settings)
-    log.info("KochGuru startet …")
+    log.info("KochGuru startet (nur Bot) …")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -70,6 +70,15 @@ def test_mapping_ignores_wrong_types():
     assert (m.link, m.tags, m.ingredients, m.this_week) == (None, None, None, None)
 
 
+def test_page_emoji_icon_becomes_recipe_emoji():
+    mapping = resolve_mapping(SCHEMA, PropertyNames())
+    with_emoji = page(5, "Dal") | {"icon": {"type": "emoji", "emoji": "🍛"}}
+    with_file = page(6, "Salat") | {"icon": {"type": "external", "external": {"url": "https://x/icon.png"}}}
+    assert page_to_recipe(with_emoji, mapping).emoji == "🍛"
+    assert page_to_recipe(with_file, mapping).emoji is None
+    assert page_to_recipe(page(7, "Suppe"), mapping).emoji is None
+
+
 def test_page_to_recipe_resolves_relations_and_reads_all_fields():
     mapping = resolve_mapping(SCHEMA, PropertyNames())
     p = page(1, ["Sweet Potatoes, ", "Lentils"], "https://x.de/a_b", ["Veggie", "Winter"],

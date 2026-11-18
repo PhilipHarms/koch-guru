@@ -2,6 +2,8 @@
 
 KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdatenbank vorschlägt. Die Auswahl trifft Claude (über OpenRouter), aber ausschließlich aus den Rezepten in Notion.
 
+Dazu entsteht eine Web-App (installierbar auf dem Handy), die auf derselben Datenbank aufbaut. Bot und Web-App laufen in einem Prozess und teilen sich Notion-Zugriff und Zwischenspeicher. Stand: Die Schnittstelle unter `/api` und die Anmeldung per persönlichem Link sind fertig, die Oberfläche folgt.
+
 ## Was der Bot kann
 
 - Freitext verstehen: „was Schnelles, vegetarisch“, „wir haben noch Brokkoli und Feta“, „Ideen für die Woche“
@@ -20,8 +22,10 @@ Geplant: Zutaten-Verknüpfung beim Import, „Zuletzt gekocht“ und Zubereitung
 ## Aufbau
 
 ```
-main.py                     Einstiegspunkt (Railway startet `python main.py`)
+main.py                     Einstiegspunkt (Railway startet `python main.py`): Web-App plus Bot
 koch_guru/
+  server.py                 Startet Web-Server und Bot gemeinsam und beendet beide sauber
+  core.py                   Gemeinsame Clients: Notion, Rezept-Repository, OpenRouter, HTTP
   config.py                 Umgebungsvariablen lesen und prüfen
   models.py                 Recipe-Datenklasse
   notion_repo.py            Notion-Zugriff: Datenquelle, Property-Mapping, Pagination, Cache
@@ -33,6 +37,10 @@ koch_guru/
   bot/app.py                Telegram-Anwendung, Zugriffsschutz, Fehlerbehandlung
   bot/handlers.py           Befehle und Nachrichten
   bot/render.py             Telegram-HTML mit Escaping
+  web/app.py                FastAPI: Anmeldung, Fehlerbehandlung, später die gebaute Oberfläche
+  web/api.py                JSON-Schnittstelle unter /api
+  web/auth.py               Anmeldung per persönlichem Link (Cookie)
+  web/keys.py               Erzeugt Anmeldeschlüssel für APP_USERS
 tests/                      Tests ohne Netzwerkzugriff
 ```
 
@@ -47,6 +55,8 @@ Grundprinzip: Claude liefert nur Nummern aus der Rezeptliste plus Begründung. D
 | `NOTION_DATABASE_ID` | ja | ID (oder URL) der Rezeptdatenbank |
 | `OPENROUTER_API_KEY` | ja | API-Key von OpenRouter |
 | `ALLOWED_USER_IDS` | empfohlen | Komma-getrennte Telegram-User-IDs, die den Bot nutzen dürfen. Leer: Der Bot antwortet allen nur mit ihrer eigenen ID. |
+| `APP_USERS` | für die Web-App | Wer sich anmelden darf, als `name:schlüssel`, mehrere mit Komma. Erzeugen mit `python -m koch_guru.web.keys philip charlotte`. Leer: Niemand kann sich anmelden, der Bot läuft trotzdem. |
+| `PORT` | nein | Port des Web-Servers, Standard 8000. Railway setzt ihn selbst. |
 | `OPENROUTER_MODEL` | nein | Modell-Slug bei OpenRouter, Standard `anthropic/claude-sonnet-5.5` |
 | `RECIPE_CACHE_SECONDS` | nein | Standard 300 |
 | `NOTION_PROP_LINK`, `NOTION_PROP_TAGS`, `NOTION_PROP_ORIGIN`, `NOTION_PROP_INGREDIENTS`, `NOTION_PROP_THIS_WEEK` | nein | Property-Namen, Standard `Link`, `Tags`, `Origin`, `Ingredients`, `This Week?` |
@@ -61,6 +71,21 @@ Die Titel-Property wird automatisch erkannt. Fehlt die Link-Property unter dem e
 
 Die eigene Telegram-ID findest du, indem du dem Bot schreibst, solange `ALLOWED_USER_IDS` leer ist.
 
+## Web-App: Anmeldung und Schnittstelle
+
+Jede Person hat einen eigenen Anmeldelink `https://<adresse>/login/<schlüssel>`. Einmal pro Gerät öffnen, danach bleibt man ein Jahr angemeldet (HTTP-only-Cookie). Um ein Gerät abzumelden, den Schlüssel in `APP_USERS` austauschen.
+
+| Methode und Pfad | Zweck |
+| --- | --- |
+| `GET /api/me` | Wer angemeldet ist |
+| `GET /api/recipes` | Alle Rezepte mit Tags, Origin, Zutaten, Emoji und Wochenstatus |
+| `GET /api/recipes/{id}` | Ein Rezept |
+| `PATCH /api/recipes/{id}` | `{"this_week": true}` setzt oder entfernt das Rezept auf der Wochenliste |
+| `POST /api/week/clear` | Wochenliste leeren |
+| `GET /healthz` | Lebenszeichen ohne Anmeldung |
+
+Ohne gültiges Cookie antworten alle `/api`-Aufrufe mit 401. Fehler von Notion kommen als 502, Überlastung (429 bei Notion) als 503 mit `Retry-After`.
+
 ## Lokal starten
 
 ```bash
@@ -68,14 +93,19 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env   # Werte eintragen
-python main.py
+python main.py          # Web-App auf http://localhost:8000 plus Bot
+python -m koch_guru.bot # nur der Bot
 pytest
 ```
+
+Lokal anmelden: `http://localhost:8000/login/<schlüssel aus APP_USERS>`.
 
 Wichtig: Läuft der Bot gleichzeitig auf Railway, verteilt Telegram die Nachrichten zufällig auf beide Instanzen (Fehler „terminated by other getUpdates request“). Lokal daher am besten mit einem zweiten Test-Bot-Token arbeiten.
 
 ## Deployment auf Railway
 
-Railway baut aus `requirements.txt` und startet `python main.py`. Die Python-Version steht in `.python-version`. Benötigte Variablen: `TELEGRAM_TOKEN`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `OPENROUTER_API_KEY` und `ALLOWED_USER_IDS`.
+Railway baut aus `requirements.txt` und startet `python main.py`. Die Python-Version steht in `.python-version`. Benötigte Variablen: `TELEGRAM_TOKEN`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `OPENROUTER_API_KEY`, `ALLOWED_USER_IDS` und für die Web-App `APP_USERS`.
+
+Damit die Web-App erreichbar ist, braucht der Dienst eine öffentliche Adresse: in Railway unter Settings › Networking › „Generate Domain“. Railway setzt `PORT` selbst und leitet HTTPS an den Server weiter.
 
 Im OpenRouter-Dashboard erscheinen die Anfragen unter dem App-Namen „KochGuru“.

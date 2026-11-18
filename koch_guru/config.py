@@ -7,7 +7,8 @@ ones already configured on Railway and must not be renamed.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -39,6 +40,9 @@ class Settings:
     allowed_user_ids: frozenset[int] = frozenset()
     properties: PropertyNames = PropertyNames()
     recipe_cache_seconds: int = 300
+    # Web app: personal login key -> user name (e.g. "philip"), from APP_USERS.
+    app_users: dict[str, str] = field(default_factory=dict)
+    port: int = 8000
 
 
 def _parse_user_ids(raw: str) -> frozenset[int]:
@@ -54,6 +58,34 @@ def _parse_user_ids(raw: str) -> frozenset[int]:
                 f"ALLOWED_USER_IDS enthält keinen gültigen Telegram-User-ID-Wert: {part!r}"
             ) from exc
     return frozenset(ids)
+
+
+MIN_KEY_LENGTH = 24
+KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+def _parse_app_users(raw: str) -> dict[str, str]:
+    """APP_USERS="philip:<key>,charlotte:<key>" -> {key: name}."""
+    users: dict[str, str] = {}
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        name, sep, key = part.partition(":")
+        name, key = name.strip().lower(), key.strip()
+        if not sep or not NAME_PATTERN.match(name):
+            raise ConfigError(f"APP_USERS: Eintrag {part.split(':')[0]!r} muss die Form name:schlüssel haben")
+        if len(key) < MIN_KEY_LENGTH or not KEY_PATTERN.match(key):
+            raise ConfigError(
+                f"APP_USERS: Der Schlüssel für {name!r} muss mindestens {MIN_KEY_LENGTH} Zeichen lang sein "
+                "und darf nur Buchstaben, Ziffern, - und _ enthalten "
+                "(neu erzeugen mit: python -m koch_guru.web.keys)"
+            )
+        if key in users or name in users.values():
+            raise ConfigError(f"APP_USERS: {name!r} oder dessen Schlüssel ist doppelt eingetragen")
+        users[key] = name
+    return users
 
 
 def load_settings(env: dict[str, str] | None = None) -> Settings:
@@ -78,6 +110,11 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     except ValueError as exc:
         raise ConfigError("RECIPE_CACHE_SECONDS muss eine ganze Zahl sein") from exc
 
+    try:
+        port = int(get("PORT", "8000"))
+    except ValueError as exc:
+        raise ConfigError("PORT muss eine ganze Zahl sein") from exc
+
     defaults = PropertyNames()
     return Settings(
         telegram_token=get("TELEGRAM_TOKEN"),
@@ -94,4 +131,6 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             this_week=get("NOTION_PROP_THIS_WEEK", defaults.this_week),
         ),
         recipe_cache_seconds=cache_seconds,
+        app_users=_parse_app_users(get("APP_USERS")),
+        port=port,
     )
