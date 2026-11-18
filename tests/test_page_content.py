@@ -157,3 +157,75 @@ def test_emoji_finder():
     assert find("Eier") == "🥚"
     assert find("saure Sahne") == "🥛"
     assert find("gelbe Linsen") == "🟤"  # the recipe's own ingredient comes first
+
+
+def paragraphs(*lines, kind="paragraph"):
+    return [block(kind, line) for line in lines]
+
+
+def test_page_without_headings_guesses_ingredients_then_steps():
+    # As many pages in Philip's Notion: bullets, a group line, then sentences.
+    blocks = [
+        *paragraphs("450 g Pasta", "4 Handvoll Babyspinat", "1 Knoblauchzehe", kind="bulleted_list_item"),
+        *paragraphs(
+            "Salt and pepper",
+            "For decoration",
+            "2 balls of burrata",
+            "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water.",
+            "Keep 1-2 handfuls for decoration.",
+        ),
+    ]
+    content = parse_content(blocks, ingredients=["Pasta"], emoji_by_name={"Pasta": "🍝"})
+    assert [i.get("name") or i.get("group") for i in content["ingredients"]] == [
+        "Pasta", "Babyspinat", "Knoblauchzehe", "Salt and pepper", "For decoration", "balls of burrata",
+    ]
+    assert content["ingredients"][0] == {"name": "Pasta", "amount": "450 g", "emoji": "🍝"}
+    assert content["steps"] == [
+        {"text": "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water."},
+        {"text": "Keep 1-2 handfuls for decoration."},
+    ]
+    assert content["blocks"] == []
+
+
+def test_marker_lines_numbered_steps_and_servings():
+    blocks = paragraphs(
+        "Serves 2.",
+        "For the tofu:",
+        "▫️300g firm tofu",
+        "▫️1 tbsp cornflour",
+        "▫️2 cloves of garlic, minced",
+        "Instructions:",
+        "1. Tear your block of tofu into nugget sized pieces and bake them for 25 minutes.",
+        "2. Serve with rice.",
+        "ENJOY!",
+    )
+    content = parse_content(blocks)
+    assert content["servings"] == "2"
+    assert content["ingredients"] == [
+        {"group": "For the tofu"},
+        {"name": "firm tofu", "amount": "300g", "emoji": None},
+        {"name": "cornflour", "amount": "1 tbsp", "emoji": None},
+        {"name": "garlic, minced", "amount": "2 cloves", "emoji": None},
+    ]
+    assert content["steps"] == [
+        {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes."},
+        {"text": "Serve with rice."},
+        {"text": "ENJOY!"},
+    ]
+
+
+def test_notes_pages_are_not_mistaken_for_recipes():
+    toggles_first = [
+        block("toggle", "Original try", children=[block("paragraph", "no baking powder")]),
+        *paragraphs("Learnings"),
+        *paragraphs("not too sweet", "not too fudgy", "Bake @ 180", kind="bulleted_list_item"),
+    ]
+    content = parse_content(toggles_first, ingredients=["Zitrone"])
+    assert content["ingredients"] == [{"name": "Zitrone", "amount": None, "emoji": None}]
+    assert content["steps"] == []
+    assert len(content["blocks"]) == 5
+
+    few_short_lines = paragraphs("Apfelessig mit 5% Säure", "Banh-mi is a fresh pickle!", "My fruit jam i can preserve")
+    content = parse_content(few_short_lines)
+    assert content["ingredients"] == [] and content["steps"] == []
+    assert len(content["blocks"]) == 3

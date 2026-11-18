@@ -23,11 +23,20 @@ TEXT_ITEMS = {"paragraph", "bulleted_list_item", "numbered_list_item", "to_do"}
 UNITS = (
     r"kg|g|mg|ml|cl|dl|l|el|tl|msp|bund|prisen?|stück|stk|dosen?|becher|zehen?|scheiben?|handvoll"
     r"|pck|päckchen|packungen?|gläser|glas|tassen?|cups?|tbsp|tsp|oz|lbs?|cm|blätter|blatt|zweige?"
+    r"|pinch|bunch|tins?|cans?|cloves?|handfuls?|sprigs?|stalks?"
 )
 AMOUNT = re.compile(
-    rf"^((?:ca\.\s*)?[\d½¼¾⅓⅔⅛][\d½¼¾⅓⅔⅛.,/\-–\s]*(?:\s*(?:{UNITS})\b\.?)?)\s+(\S.*)$",
+    rf"^((?:ca\.\s*)?[\d½¼¾⅓⅔⅛][\d½¼¾⅓⅔⅛.,/\-–\s]*(?:[x×]\s*\d[\d.,]*\s*)?(?:\s*(?:{UNITS})\b\.?)?)"
+    rf"\s+(\S.*)$",
     re.IGNORECASE,
 )
+# Pages without headings: lines like "Instructions:" start a section, numbered lines are steps.
+MARKER_MAX_WORDS = 4
+INGREDIENT_MAX_CHARS = 70
+MIN_GUESSED_INGREDIENTS = 3
+NUMBERING = re.compile(r"^\s*(?:\d+\s*[.)]|(?:schritt|step)\s*\d+\s*[:.)]?)\s+", re.IGNORECASE)
+GROUP_START = re.compile(r"^(?:for|für)\b", re.IGNORECASE)
+SERVES_LINE = re.compile(r"^(?:serves|makes|für|portionen:?)\s+(\d.*?)\.?$", re.IGNORECASE)
 MINUTES = re.compile(r"⏱️?\s*(\d+)\s*min", re.IGNORECASE)
 SERVINGS = re.compile(r"🍽️?\s*([^·]+?)\s*(?:·|$)")
 
@@ -166,10 +175,29 @@ class EmojiFinder:
 
 
 def ingredient_line(line: str, find_emoji: EmojiFinder) -> dict[str, Any]:
-    line = line.strip().lstrip("-•*–").strip()
+    line = re.sub(r"^[^\w(½¼¾⅓⅔⅛]+", "", line.strip())  # list marks like "-", "•" or "▫️"
     match = AMOUNT.match(line)
     amount, name = (match.group(1).strip(), match.group(2).strip()) if match else (None, line)
+    name = re.sub(r"^of\s+", "", name)  # "2 cloves of garlic"
     return {"name": name, "amount": amount, "emoji": find_emoji(name)}
+
+
+def _is_step(line: str) -> bool:
+    """A sentence or a numbered line, as opposed to a short ingredient line."""
+    return bool(NUMBERING.match(line)) or len(line) > 80 or (len(line) > 25 and line.endswith((".", "!")))
+
+
+def _is_ingredient(line: str) -> bool:
+    return not _is_step(line) and len(line) <= INGREDIENT_MAX_CHARS
+
+
+def _is_group(line: str) -> bool:
+    """A label inside the ingredients, like "Für die Soße:" or "For decoration"."""
+    return not AMOUNT.match(line) and (line.endswith(":") or bool(GROUP_START.match(line)))
+
+
+def _step_text(line: str) -> str:
+    return NUMBERING.sub("", line, count=1).strip()
 
 
 def _lines(block: dict[str, Any]) -> list[str]:
@@ -201,6 +229,30 @@ def _info_line(text: str) -> tuple[int | None, str | None] | None:
     return (int(minutes.group(1)) if minutes else None, servings.group(1).strip() if servings else None)
 
 
+def _marker(block: dict[str, Any]) -> str | None:
+    """A heading or a short line that starts the ingredients or the steps ("Zutaten", "Instructions:")."""
+    kind = block.get("type")
+    if kind not in HEADINGS and kind != "paragraph":
+        return None
+    text = _plain(block).rstrip(":").strip()
+    if not text or (kind == "paragraph" and len(text.split()) > MARKER_MAX_WORDS):
+        return None
+    return _section(text)
+
+
+def _leading_ingredient_lines(blocks: list[dict[str, Any]], start: int) -> int:
+    """How many ingredient-like lines follow from `start` before anything else."""
+    count = 0
+    for block in blocks[start:]:
+        if block.get("type") not in TEXT_ITEMS:
+            break
+        lines = _lines(block)
+        if not all(_is_ingredient(line) for line in lines):
+            break
+        count += len(lines)
+    return count
+
+
 def parse_content(
     blocks: list[dict[str, Any]],
     *,
@@ -209,12 +261,19 @@ def parse_content(
 ) -> dict[str, Any]:
     """Split a recipe page into info, ingredients, steps and the remaining blocks.
 
+    Sections start at a heading or a short line such as "Zutaten" or "Instructions:". Many
+    pages have neither: there a page that begins with a run of short lines gets those as
+    ingredients, and the sentences right after them as steps.
+
     `ingredients` are the recipe's linked ingredients; they are shown when the page has
     no ingredient list of its own and help to pick emojis for free-text lines.
     """
     linked = list(ingredients)
     emoji_by_name = emoji_by_name or {}
     find_emoji = EmojiFinder(linked, emoji_by_name)
+    markers = [_marker(b) for b in blocks]
+    has_ingredient_marker = "ingredients" in markers
+    has_step_marker = "steps" in markers
 
     minutes: int | None = None
     servings: str | None = None
@@ -222,38 +281,65 @@ def parse_content(
     steps: list[dict[str, str]] = []
     rest: list[dict[str, Any]] = []
     section: str | None = None
-    has_ingredient_section = False
+    guess: str | None = None  # "ingredients" or "steps" while reading a page without headings; "off" after
+    has_ingredient_list = False
+
+    def add_ingredients(lines: list[str]) -> None:
+        for line in lines:
+            if _is_group(line):
+                items.append({"group": line.rstrip(":").strip()})
+            else:
+                items.append(ingredient_line(line, find_emoji))
 
     for index, block in enumerate(blocks):
         kind = block.get("type")
+        if markers[index]:
+            section, guess = markers[index], "off"
+            has_ingredient_list = has_ingredient_list or section == "ingredients"
+            continue
         if kind in HEADINGS:
             text = _plain(block)
-            found = _section(text)
-            if found is None and section and kind == "heading_3" and text:
+            if section and kind == "heading_3" and text:
                 # A sub-heading inside a section, like "Für den Teig".
                 (items if section == "ingredients" else steps).append({"group": text.rstrip(":")})
                 continue
-            section = found
-            has_ingredient_section = has_ingredient_section or section == "ingredients"
-            if section is None:
-                rest.extend(_simple(block))
+            section, guess = None, "off"
+            rest.extend(_simple(block))
             continue
         if index == 0 and kind == "paragraph" and (info := _info_line(_plain(block))):
             minutes, servings = info
             continue
-        if section == "ingredients" and kind in TEXT_ITEMS:
-            for line in _lines(block):
-                if line.endswith(":") and not AMOUNT.match(line):
-                    items.append({"group": line.rstrip(":").strip()})
-                else:
-                    items.append(ingredient_line(line, find_emoji))
+        if kind == "paragraph" and servings is None and not (items or steps or rest):
+            if serves := SERVES_LINE.match(_plain(block)):  # "Serves 2." or "Für 4 Personen"
+                servings = serves.group(1).strip()
+                continue
+        if kind in TEXT_ITEMS and section == "ingredients":
+            add_ingredients(_lines(block))
             continue
-        if section == "steps" and kind in TEXT_ITEMS:
-            steps.extend({"text": line} for line in _lines(block))
+        if kind in TEXT_ITEMS and section == "steps":
+            steps.extend({"text": _step_text(line)} for line in _lines(block))
             continue
+        if kind in TEXT_ITEMS and section is None and guess != "off":
+            lines = _lines(block)
+            if guess is None:
+                # Only at the top of the page (photos may come first).
+                at_top = all(b["type"] == "image" for b in rest)
+                enough = _leading_ingredient_lines(blocks, index) >= MIN_GUESSED_INGREDIENTS
+                guess = "ingredients" if at_top and enough and not has_ingredient_marker else "off"
+            if guess == "ingredients":
+                if all(_is_ingredient(line) for line in lines):
+                    add_ingredients(lines)
+                    has_ingredient_list = True
+                    continue
+                guess = "steps" if not has_step_marker else "off"
+            if guess == "steps":
+                if all(_is_step(line) for line in lines):
+                    steps.extend({"text": _step_text(line)} for line in lines)
+                    continue
+                guess = "off"
         rest.extend(_simple(block))
 
-    if not has_ingredient_section:
+    if not has_ingredient_list:
         items = [{"name": n, "amount": None, "emoji": emoji_by_name.get(n)} for n in linked]
 
     return {
