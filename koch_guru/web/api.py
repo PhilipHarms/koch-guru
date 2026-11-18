@@ -2,16 +2,42 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 from typing import Any
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
+from koch_guru.page_content import parse_content
 from koch_guru.web.auth import current_user, display_name
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
+
+MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+def image_version(url: str) -> str:
+    """Stays the same while the cover stays the same.
+
+    Notion signs its file links anew on every request, so for those only the path counts.
+    """
+    parts = urlsplit(url)
+    signed = "X-Amz-" in parts.query
+    stable = f"{parts.scheme}://{parts.netloc}{parts.path}" if signed else url
+    return hashlib.sha256(stable.encode()).hexdigest()[:12]
+
+
+def image_path(recipe: Recipe) -> str | None:
+    if not recipe.cover:
+        return None
+    return f"/api/recipes/{recipe.short_id}/image?v={image_version(recipe.cover)}"
 
 
 def recipe_json(recipe: Recipe) -> dict[str, Any]:
@@ -26,6 +52,7 @@ def recipe_json(recipe: Recipe) -> dict[str, Any]:
         "ingredients": list(recipe.ingredients),
         "this_week": recipe.this_week,
         "emoji": recipe.emoji,
+        "image": image_path(recipe),
         "created": recipe.created,
     }
 
@@ -60,6 +87,46 @@ async def list_recipes(request: Request) -> dict[str, Any]:
 @router.get("/recipes/{recipe_id}")
 async def get_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
     return recipe_json(await find_recipe(repo_of(request), recipe_id))
+
+
+@router.get("/recipes/{recipe_id}/content")
+async def get_recipe_content(recipe_id: str, request: Request) -> dict[str, Any]:
+    """Ingredients, steps and the rest of the Notion page, ready for the recipe screen."""
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    blocks = await repo.page_blocks(recipe.id)
+    return parse_content(blocks, ingredients=recipe.ingredients, emoji_by_name=repo.ingredient_emojis)
+
+
+@router.get("/recipes/{recipe_id}/image")
+async def get_recipe_image(recipe_id: str, request: Request) -> Response:
+    """The cover photo, passed through so that it gets a stable address the phone can cache.
+
+    The address carries a version (?v=...), so a new cover gets a new address.
+    """
+    recipe = await find_recipe(repo_of(request), recipe_id)
+    if not recipe.cover or not recipe.cover.startswith(("https://", "http://")):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Kein Foto")
+    http: httpx.AsyncClient = request.app.state.http
+    try:
+        upstream = await http.get(recipe.cover, headers={"Accept": "image/*"})
+    except httpx.HTTPError as exc:
+        log.warning("Foto von %s nicht geladen: %s", urlsplit(recipe.cover).netloc, exc)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Foto nicht erreichbar") from exc
+    media_type = upstream.headers.get("content-type", "").split(";")[0].strip()
+    if (
+        upstream.status_code != 200
+        or not media_type.startswith("image/")
+        or len(upstream.content) > MAX_IMAGE_BYTES
+    ):
+        log.warning("Foto von %s unbrauchbar: %s %s", urlsplit(recipe.cover).netloc,
+                    upstream.status_code, media_type)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Foto nicht erreichbar")
+    return Response(
+        upstream.content,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 class RecipeUpdate(BaseModel):

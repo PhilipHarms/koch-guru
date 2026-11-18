@@ -67,3 +67,96 @@ p.sort-button { margin: 0; cursor: default; }
 .brand-screen h1 { margin: 0; font-family: var(--font-display); font-size: 40px; font-weight: 600; letter-spacing: -0.01em; }
 .brand-screen p { margin: 0; max-width: 300px; font-size: 17px; font-weight: 500; }
 .brand-screen-button { background: var(--surface); color: var(--brand-text); }
+
+.kg-btn:disabled, .kg-iconbtn:disabled { opacity: 0.55; cursor: default; }
+.fehler { margin: 0; color: var(--brand-text); font-size: 15px; font-weight: 600; }
+.leer-box {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-12);
+  padding: var(--space-20); border: 1.5px dashed var(--line-strong); border-radius: var(--radius-card);
+}
+.leer-box p, .leer-box h2 { margin: 0; }
+.knopf-reihe { display: flex; flex-wrap: wrap; gap: var(--space-10); }
+.kg-tag-neutral { background: var(--surface-cream); color: var(--ink-soft); }
+
+/* Rezeptseite */
+.rezept { padding-bottom: var(--space-28); }
+.rezept-hero { position: relative; }
+.kg-bild-hero { height: 330px; border-radius: 0; }
+.kg-bild-hero .kg-bild-emoji { font-size: 130px; }
+.rezept-zurueck { position: absolute; top: calc(var(--space-20) + env(safe-area-inset-top)); left: var(--space-16); }
+.rezept-inhalt {
+  position: relative; margin-top: -28px; padding: 26px var(--space-20) 0; background: var(--surface);
+  border-radius: var(--radius-hero) var(--radius-hero) 0 0; display: flex; flex-direction: column; gap: 22px;
+}
+.rezept-kopf { display: flex; flex-direction: column; gap: var(--space-10); }
+.rezept-kopf h1 { margin: 0; color: var(--ink); overflow-wrap: anywhere; -webkit-hyphens: auto; hyphens: auto; }
+.rezept-quelle { margin: 0; color: var(--brand-text); font-size: 15px; }
+.rezept-meta { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-6) var(--space-16); color: var(--ink-muted); }
+.rezept-meta span { display: inline-flex; align-items: center; gap: var(--space-6); }
+.rezept-tags { list-style: none; margin: 0; padding: 0; }
+.rezept-aktionen { display: flex; flex-direction: column; gap: var(--space-10); }
+.rezept-woche { width: 100%; }
+.rezept-woche[aria-pressed="true"] { background: var(--success-soft); border-color: var(--success-line); color: var(--success); }
+.rezept-links { display: flex; flex-wrap: wrap; gap: 0 var(--space-20); }
+.rezept-link {
+  display: inline-flex; align-items: center; gap: var(--space-6); min-height: var(--size-touch);
+  color: var(--brand-text); font-size: 15px; font-weight: 600; text-decoration: none;
+}
+.rezept-abschnitt { display: flex; flex-direction: column; gap: var(--space-14); }
+.rezept-abschnitt h2 { margin: 0; color: var(--ink); }
+.abschnitt-kopf { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-12); }
+.abschnitt-kopf p { margin: 0; }
+
+.zutaten { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.zutat { display: flex; align-items: center; gap: var(--space-12); min-height: 56px; border-bottom: 1px solid var(--line); }
+.zutat-emoji {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: var(--surface-cream);
+  display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-muted);
+}
+.zutat-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: var(--space-8) 0; }
+.zutat-name { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.zutaten-gruppe, .schritte-gruppe { padding-top: var(--space-16); color: var(--ink-muted); font-size: 13px; }
+.schritte { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-16); }
+.schritt { display: flex; gap: var(--space-14); }
+.schritt p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.schritt-nummer {
+  flex-shrink: 0; width: 30px; height: 30px; border-radius: 15px; background: var(--surface-cream);
+  display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: var(--brand-text);
+}
+
+/* Weitere Inhalte der Notion-Seite */
+.notizen { gap: var(--space-12); }
+.notizen a { color: var(--brand-text); }
+.notiz-titel { margin: var(--space-8) 0 0; }
+.notiz-text { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.notiz-liste { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: var(--space-6); overflow-wrap: anywhere; }
+.notiz-zitat { margin: 0; padding-left: var(--space-14); border-left: 3px solid var(--line-strong); color: var(--ink-soft); }
+.notiz-hinweis { display: flex; gap: var(--space-10); padding: var(--space-14) var(--space-16); border-radius: var(--radius-field); background: var(--surface-cream); }
+.notiz-aufklapp summary { cursor: pointer; font-weight: 600; }
+.notiz-todo { margin: 0; display: flex; gap: var(--space-10); align-items: flex-start; }
+.notiz-todo.erledigt { color: var(--ink-muted); text-decoration: line-through; }
+.notiz-kasten {
+  flex-shrink: 0; width: 20px; height: 20px; margin-top: 2px; border: 1.5px solid var(--line-strong); border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--success);
+}
+.notiz-bild { margin: 0; display: flex; flex-direction: column; gap: var(--space-6); }
+.notiz-bild img { width: 100%; height: auto; border-radius: var(--radius-card); background: var(--foto-platzhalter); }
+.notiz-link {
+  display: flex; align-items: center; gap: var(--space-10); min-height: var(--size-touch); padding: 0 var(--space-16);
+  border: 1.5px solid var(--line-strong); border-radius: var(--radius-field); color: var(--ink); font-weight: 600; text-decoration: none;
+}
+.notizen .notiz-link { color: var(--ink); }
+.notiz-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notiz-trenner { width: 100%; border: 0; border-top: 1px solid var(--line); margin: var(--space-8) 0; }
+
+/* Woche */
+.woche-liste { list-style: none; margin: 0; display: flex; flex-direction: column; gap: var(--space-12); }
+.woche-eintrag { display: flex; align-items: center; gap: var(--space-10); padding: var(--space-12); border: 1px solid var(--line); border-radius: 20px; }
+.woche-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-14); color: inherit; text-decoration: none; }
+.woche-text { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.woche-text .titel-karte {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  overflow-wrap: anywhere; color: var(--ink);
+}
+.woche-text .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.woche-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 12px; }

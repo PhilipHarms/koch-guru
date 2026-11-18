@@ -43,6 +43,17 @@ class FakeRepo:
         self.recipes = [dataclasses.replace(r, this_week=value) if r.id == page_id else r
                         for r in self.recipes]
 
+    ingredient_emojis = {"Kürbis": "🎃", "Linsen": "🫘"}
+
+    async def page_blocks(self, page_id):
+        self.content_requests = getattr(self, "content_requests", []) + [page_id]
+        return [
+            {"type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zutaten"}]}},
+            {"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": [{"plain_text": "500 g Kürbis"}]}},
+            {"type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zubereitung"}]}},
+            {"type": "numbered_list_item", "numbered_list_item": {"rich_text": [{"plain_text": "Kochen."}]}},
+        ]
+
     async def clear_this_week(self):
         planned = [r for r in self.recipes if r.this_week]
         for r in planned:
@@ -50,12 +61,12 @@ class FakeRepo:
         return len(planned)
 
 
-def client(repo=None, users=USERS):
-    return TestClient(create_app(repo=repo or FakeRepo(), users=users), base_url="https://testserver")
+def client(repo=None, users=USERS, http=None):
+    return TestClient(create_app(repo=repo or FakeRepo(), users=users, http=http), base_url="https://testserver")
 
 
-def signed_in(repo=None, key=PHILIP_KEY):
-    c = client(repo)
+def signed_in(repo=None, key=PHILIP_KEY, http=None):
+    c = client(repo, http=http)
     c.cookies.set(COOKIE_NAME, key)
     return c
 
@@ -106,7 +117,7 @@ def test_list_recipes():
         "id": DAL_ID, "name": "Kürbis-Dal", "link": "https://example.com/dal",
         "source_url": "https://example.com/dal", "notion_url": "https://notion.so/dal",
         "tags": ["Veggie"], "origin": ["Green Feast"], "ingredients": ["Kürbis", "Linsen"],
-        "this_week": True, "emoji": "🍛", "created": "2026-11-01T10:00:00.000Z",
+        "this_week": True, "emoji": "🍛", "image": None, "created": "2026-11-01T10:00:00.000Z",
     }
     assert pasta["link"] == "https://notion.so/pasta" and pasta["emoji"] is None
 
@@ -192,3 +203,56 @@ def test_built_front_end_is_served_with_spa_fallback(tmp_path):
     c.cookies.set(COOKIE_NAME, PHILIP_KEY)
     assert c.get("/api/unknown").status_code == 404
     assert c.get("/api/me").status_code == 200
+
+
+SIGNED = "https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/file-1/dal.jpg?X-Amz-Signature={}"
+
+
+def with_cover(repo, cover):
+    repo.recipes = [dataclasses.replace(repo.recipes[0], cover=cover), *repo.recipes[1:]]
+    return repo
+
+
+def test_recipe_content_splits_ingredients_and_steps():
+    repo = FakeRepo()
+    data = signed_in(repo).get(f"/api/recipes/{DAL_ID}/content").json()
+    assert data["ingredients"] == [{"name": "Kürbis", "amount": "500 g", "emoji": "🎃"}]
+    assert data["steps"] == [{"text": "Kochen."}]
+    assert repo.content_requests == [DAL_ID]
+    assert signed_in().get("/api/recipes/unknown/content").status_code == 404
+    assert client().get(f"/api/recipes/{DAL_ID}/content").status_code == 401
+
+
+def test_image_address_stays_the_same_when_notion_signs_the_link_anew():
+    first = signed_in(with_cover(FakeRepo(), SIGNED.format("a"))).get("/api/recipes").json()
+    second = signed_in(with_cover(FakeRepo(), SIGNED.format("b"))).get("/api/recipes").json()
+    image = first["recipes"][0]["image"]
+    assert image.startswith(f"/api/recipes/{DAL_ID.replace('-', '')}/image?v=")
+    assert image == second["recipes"][0]["image"]
+    other = signed_in(with_cover(FakeRepo(), SIGNED.replace("file-1", "file-2").format("a"))).get("/api/recipes")
+    assert other.json()["recipes"][0]["image"] != image
+    assert first["recipes"][1]["image"] is None
+
+
+def test_image_is_passed_through_with_long_caching():
+    seen = []
+
+    def upstream(request):
+        seen.append(str(request.url))
+        if "broken" in str(request.url):
+            return httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html>")
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=b"jpeg-bytes")
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+    c = signed_in(with_cover(FakeRepo(), SIGNED.format("a")), http=http)
+    response = c.get(f"/api/recipes/{DAL_ID}/image?v=x")
+    assert response.status_code == 200
+    assert response.content == b"jpeg-bytes"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert "immutable" in response.headers["cache-control"]
+    assert seen == [SIGNED.format("a")]
+
+    assert c.get(f"/api/recipes/{PASTA_ID}/image").status_code == 404  # no cover
+    broken = signed_in(with_cover(FakeRepo(), "https://example.com/broken.jpg"), http=http)
+    assert broken.get(f"/api/recipes/{DAL_ID}/image").status_code == 404  # not an image
+    assert client(http=http).get(f"/api/recipes/{DAL_ID}/image").status_code == 401

@@ -30,6 +30,15 @@ const TAG_STYLE: Record<string, { label: string; className: string; chip?: strin
   neu: { label: 'Neu', className: 'kg-tag-neu', chip: '🌟' },
 };
 
+/** Notion tags often start with their own emoji ("🥬 Veggie"); compare without it. */
+export function tagWord(tag: string): string {
+  return tag.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+}
+
+export function hasOwnEmoji(tag: string): boolean {
+  return tagWord(tag) !== tag.trim();
+}
+
 export function tagStyle(tag: string) {
-  return TAG_STYLE[tag.toLocaleLowerCase('de')];
+  return TAG_STYLE[tagWord(tag).toLocaleLowerCase('de')];
 }

@@ -11,6 +11,7 @@ def test_lifespan_starts_and_stops_core_and_bot(monkeypatch):
 
     class FakeCore:
         repo = object()
+        http = None
 
         async def start(self):
             calls.append("core.start")

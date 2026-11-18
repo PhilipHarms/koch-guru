@@ -84,8 +84,10 @@ Jede Person hat einen eigenen Anmeldelink `https://<adresse>/login/<schlüssel>`
 | Methode und Pfad | Zweck |
 | --- | --- |
 | `GET /api/me` | Wer angemeldet ist |
-| `GET /api/recipes` | Alle Rezepte mit Tags, Origin, Zutaten, Emoji und Wochenstatus |
+| `GET /api/recipes` | Alle Rezepte mit Tags, Origin, Zutaten, Emoji, Foto und Wochenstatus |
 | `GET /api/recipes/{id}` | Ein Rezept |
+| `GET /api/recipes/{id}/content` | Inhalt der Notion-Seite: Zeit, Portionen, Zutaten mit Mengen, Schritte und alles Weitere |
+| `GET /api/recipes/{id}/image` | Titelbild der Notion-Seite, über den Server gereicht, damit das Handy es zwischenspeichern kann |
 | `PATCH /api/recipes/{id}` | `{"this_week": true}` setzt oder entfernt das Rezept auf der Wochenliste |
 | `POST /api/week/clear` | Wochenliste leeren |
 | `GET /healthz` | Lebenszeichen ohne Anmeldung |

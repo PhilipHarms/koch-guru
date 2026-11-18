@@ -17,6 +17,7 @@ class Recipe:
     this_week: bool = False  # on the "This Week?" list
     emoji: str | None = None  # page icon, shown when there is no photo
     created: str | None = None  # ISO timestamp of the Notion page, for "newest first"
+    cover: str | None = None  # cover image URL; Notion-hosted ones expire after an hour
 
     @property
     def short_id(self) -> str:

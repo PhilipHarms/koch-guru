@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import type { Recipe } from '../lib/api';
+import { useData } from '../lib/data';
+import { recipePath, sourceOf } from '../lib/recipe';
 import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
-import { tagStyle } from '../lib/tiles';
+import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, SucheIcon } from '../components/icons';
 
@@ -10,10 +12,8 @@ type View = 'kacheln' | 'liste';
 type Sort = 'neu' | 'name';
 const SORT_LABEL: Record<Sort, string> = { neu: 'Neu hinzugefügt', name: 'Name' };
 
-/** Where a recipe comes from: the Origin field in Notion, else it is our own. */
-export function sourceOf(recipe: Recipe): string {
-  return recipe.origin[0] || 'Eigenes Rezept';
-}
+/** Search, filters and scroll position survive a visit to a recipe page and back. */
+const remembered = { query: '', selected: [] as string[], scrollY: 0 };
 
 type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
 
@@ -26,7 +26,7 @@ function buildChips(recipes: Recipe[]): Chip[] {
   const tags = count(recipes.flatMap((r) => r.tags)).map(([tag]) => ({
     key: `tag:${tag}`,
     label: tag,
-    emoji: tagStyle(tag)?.chip,
+    emoji: hasOwnEmoji(tag) ? undefined : tagStyle(tag)?.chip,
     matches: (r: Recipe) => r.tags.includes(tag),
   }));
   // Cookbooks and sources only when at least two recipes share them.
@@ -43,7 +43,7 @@ function buildChips(recipes: Recipe[]): Chip[] {
 function RecipeCard({ recipe }: { recipe: Recipe }) {
   const tag = recipe.tags.map(tagStyle).find(Boolean);
   return (
-    <a class="kg-karte" href={recipe.link} target="_blank" rel="noopener noreferrer">
+    <a class="kg-karte" href={recipePath(recipe)}>
       <RecipeImage recipe={recipe} size="karte">
         {tag && (
           <div class="kg-bild-oben kg-tags">
@@ -60,7 +60,7 @@ function RecipeCard({ recipe }: { recipe: Recipe }) {
 function RecipeRow({ recipe }: { recipe: Recipe }) {
   return (
     <li>
-      <a class="kg-zeile" href={recipe.link} target="_blank" rel="noopener noreferrer">
+      <a class="kg-zeile" href={recipePath(recipe)}>
         <RecipeImage recipe={recipe} size="liste" />
         <span class="kg-zeile-text">
           <span class="titel-karte">{recipe.name}</span>
@@ -71,9 +71,25 @@ function RecipeRow({ recipe }: { recipe: Recipe }) {
   );
 }
 
+export function RecipesRoute() {
+  return <RecipesPage recipes={useData().recipes} />;
+}
+
 export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
-  const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
+  const [query, setQuery] = useState(remembered.query);
+  const [selected, setSelected] = useState<string[]>(remembered.selected);
+
+  useEffect(() => {
+    remembered.query = query;
+    remembered.selected = selected;
+  }, [query, selected]);
+
+  useLayoutEffect(() => {
+    window.scrollTo(0, remembered.scrollY);
+    return () => {
+      remembered.scrollY = window.scrollY;
+    };
+  }, []);
   const [view, setView] = useState<View>(() => load('ansicht', ['kacheln', 'liste'] as const, 'kacheln'));
   const [sort, setSort] = useState<Sort>(() => load('sortierung', ['neu', 'name'] as const, 'neu'));
 
