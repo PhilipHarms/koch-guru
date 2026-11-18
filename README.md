@@ -2,7 +2,7 @@
 
 KochGuru ist ein privater Telegram-Bot, der Rezepte aus einer Notion-Rezeptdatenbank vorschlägt. Die Auswahl trifft Claude (über OpenRouter), aber ausschließlich aus den Rezepten in Notion.
 
-Dazu entsteht eine Web-App (installierbar auf dem Handy), die auf derselben Datenbank aufbaut. Bot und Web-App laufen in einem Prozess und teilen sich Notion-Zugriff und Zwischenspeicher. Stand: Die Schnittstelle unter `/api` und die Anmeldung per persönlichem Link sind fertig, die Oberfläche folgt.
+Dazu entsteht eine Web-App (installierbar auf dem Handy), die auf derselben Datenbank aufbaut. Bot und Web-App laufen in einem Prozess und teilen sich Notion-Zugriff und Zwischenspeicher. Stand: Anmeldung per persönlichem Link, die Schnittstelle unter `/api` und die Rezeptübersicht (Suche, Filter, Kacheln und Liste) sind fertig. Heute, Woche und Einkauf folgen.
 
 ## Was der Bot kann
 
@@ -42,6 +42,12 @@ koch_guru/
   web/auth.py               Anmeldung per persönlichem Link (Cookie)
   web/keys.py               Erzeugt Anmeldeschlüssel für APP_USERS
 tests/                      Tests ohne Netzwerkzugriff
+web/                        Oberfläche: Preact + TypeScript, gebaut mit Vite
+  src/styles/tokens.css     Farben, Schrift, Abstände aus dem Design-System KochGuru (nicht von Hand ändern)
+  src/styles/components.css Komponenten aus dem Design-System
+  src/pages/                Bildschirme (Rezepte, Platzhalter für Heute, Woche, Einkauf)
+  public/                   Manifest, App-Icons, Service Worker
+  dist/                     Gebaute Oberfläche, die der Server ausliefert (eingecheckt, siehe unten)
 ```
 
 Grundprinzip: Claude liefert nur Nummern aus der Rezeptliste plus Begründung. Der Code prüft die Nummern gegen Notion und baut die Nachricht selbst. Dadurch kann der Bot keine Rezepte erfinden, und die Formatierung bricht nicht.
@@ -99,6 +105,17 @@ pytest
 ```
 
 Lokal anmelden: `http://localhost:8000/login/<schlüssel aus APP_USERS>`.
+
+### Oberfläche entwickeln
+
+```bash
+cd web
+npm install
+npm run dev     # http://localhost:5173, leitet /api und /login an python main.py weiter
+npm run build   # prüft die Typen und baut nach web/dist
+```
+
+Der Server liefert `web/dist` aus. Solange Railway nur Python baut, wird `web/dist` mit eingecheckt: Nach Änderungen an der Oberfläche `npm run build` ausführen und `web/dist` mit committen. Später übernimmt ein Docker-Build diesen Schritt.
 
 Wichtig: Läuft der Bot gleichzeitig auf Railway, verteilt Telegram die Nachrichten zufällig auf beide Instanzen (Fehler „terminated by other getUpdates request“). Lokal daher am besten mit einem zweiten Test-Bot-Token arbeiten.
 

@@ -25,7 +25,8 @@ class FakeRepo:
         self.recipes = [
             Recipe(id=DAL_ID, name="Kürbis-Dal", notion_url="https://notion.so/dal",
                    url="https://example.com/dal", tags=("Veggie",), origin=("Green Feast",),
-                   ingredients=("Kürbis", "Linsen"), this_week=True, emoji="🍛"),
+                   ingredients=("Kürbis", "Linsen"), this_week=True, emoji="🍛",
+                   created="2026-11-01T10:00:00.000Z"),
             Recipe(id=PASTA_ID, name="Pasta e ceci", notion_url="https://notion.so/pasta"),
         ]
         self.supports_this_week = week_supported
@@ -105,7 +106,7 @@ def test_list_recipes():
         "id": DAL_ID, "name": "Kürbis-Dal", "link": "https://example.com/dal",
         "source_url": "https://example.com/dal", "notion_url": "https://notion.so/dal",
         "tags": ["Veggie"], "origin": ["Green Feast"], "ingredients": ["Kürbis", "Linsen"],
-        "this_week": True, "emoji": "🍛",
+        "this_week": True, "emoji": "🍛", "created": "2026-11-01T10:00:00.000Z",
     }
     assert pasta["link"] == "https://notion.so/pasta" and pasta["emoji"] is None
 
@@ -170,3 +171,24 @@ def test_make_app_users_produces_valid_setting():
     users = _parse_app_users(make_app_users(["Philip", "charlotte"]))
     assert sorted(users.values()) == ["charlotte", "philip"]
     assert all(len(key) >= 40 for key in users)
+
+
+def test_built_front_end_is_served_with_spa_fallback(tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<div id=app></div>")
+    (tmp_path / "assets" / "app-123.js").write_text("console.log(1)")
+    (tmp_path / "sw.js").write_text("// sw")
+    c = TestClient(create_app(repo=FakeRepo(), users=USERS, static_dir=tmp_path))
+
+    for path in ("/", "/rezepte", "/woche"):
+        response = c.get(path)
+        assert response.status_code == 200 and "id=app" in response.text
+        assert response.headers["cache-control"] == "no-cache"
+    asset = c.get("/assets/app-123.js")
+    assert "immutable" in asset.headers["cache-control"]
+    assert c.get("/sw.js").headers["cache-control"] == "no-cache"
+    # API paths never fall back to the app shell.
+    assert c.get("/api/unknown").status_code in (401, 404)
+    c.cookies.set(COOKIE_NAME, PHILIP_KEY)
+    assert c.get("/api/unknown").status_code == 404
+    assert c.get("/api/me").status_code == 200

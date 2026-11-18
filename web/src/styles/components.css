@@ -1,0 +1,113 @@
+/* KochGuru: Komponenten als CSS-Klassen. Werte kommen aus tokens.css (Farben, Abstände, Radien, Größen, Schatten)
+   und den Schriftklassen aus tokens.json (z. B. .titel-karte, .meta, .button). */
+
+body { margin: 0; font-family: var(--font-sans); background: var(--surface); color: var(--ink); -webkit-font-smoothing: antialiased; }
+.kg-demo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-12); padding: var(--space-20); box-sizing: border-box; }
+.kg-demo-col { display: flex; flex-direction: column; gap: var(--space-12); padding: var(--space-20); box-sizing: border-box; max-width: 390px; }
+.kg-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.kg-icon { display: block; flex-shrink: 0; }
+
+:where(.kg-btn, .kg-chip, .kg-seg button, .kg-iconbtn, .kg-fab, .kg-nav a, .kg-search input, .kg-check input):focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+
+/* Button */
+.kg-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-8); height: var(--size-touch); padding: 0 var(--space-16); border: 0; border-radius: var(--radius-pill); font-family: inherit; font-size: 15px; font-weight: 700; text-decoration: none; cursor: pointer; }
+.kg-btn-primaer { background: var(--brand); color: var(--on-brand); }
+.kg-btn-sekundaer { background: var(--surface); color: var(--ink); border: 1.5px solid var(--line-strong); font-weight: 600; }
+.kg-btn-gross { height: var(--size-button-gross); border-radius: var(--radius-field); padding: 0 var(--space-20); font-size: 18px; }
+.kg-btn-gross.kg-btn-sekundaer { font-size: 17px; }
+.kg-btn-fertig { background: var(--success); color: var(--on-brand); }
+.kg-iconbtn { width: var(--size-touch); height: var(--size-touch); border: 0; border-radius: var(--radius-pill); background: var(--surface-cream); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.kg-iconbtn-schwebend { background: var(--surface); box-shadow: var(--shadow-raised); }
+
+/* Filter-Chip */
+.kg-chips { display: flex; gap: var(--space-8); overflow-x: auto; }
+.kg-chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: var(--space-6); height: var(--size-chip); padding: 0 var(--space-16); border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.kg-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+
+/* Gekocht-Umschalter */
+.kg-gekocht { flex-shrink: 0; display: inline-flex; align-items: center; gap: var(--space-4); height: var(--size-chip); padding: 0 14px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.kg-gekocht[aria-pressed="true"] { padding: 0 var(--space-12); border-color: var(--tag-veggie-bg); background: var(--tag-veggie-bg); color: var(--tag-veggie-ink); font-weight: 700; }
+
+/* Ansichtsumschalter */
+.kg-seg { display: inline-flex; gap: 2px; padding: var(--space-4); border-radius: var(--radius-pill); background: var(--surface-cream); }
+.kg-seg button { min-width: var(--size-touch); height: 36px; padding: 0 var(--space-12); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--ink-muted); font-family: inherit; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.kg-seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: var(--shadow-segment); }
+.kg-seg-voll { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; box-sizing: border-box; }
+.kg-seg-voll button { height: var(--size-chip); }
+
+/* Tag */
+.kg-tags { display: flex; flex-wrap: wrap; gap: var(--space-6); }
+.kg-tag { display: inline-block; padding: 5px var(--space-10); border-radius: var(--radius-pill); font-size: 12px; font-weight: 600; }
+.kg-tag-zeit { background: var(--tag-zeit-bg); color: var(--tag-zeit-ink); }
+.kg-tag-veggie { background: var(--tag-veggie-bg); color: var(--tag-veggie-ink); }
+.kg-tag-winter { background: var(--tag-winter-bg); color: var(--tag-winter-ink); }
+.kg-tag-neu { background: var(--tag-neu-bg); color: var(--tag-neu-ink); }
+
+/* Bewertung */
+.kg-rating { display: inline-flex; align-items: center; gap: var(--space-4); padding: 6px var(--space-10); border-radius: var(--radius-pill); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 700; }
+.kg-rating-plain { padding: 0; background: transparent; font-size: 14px; }
+.kg-rating svg { fill: var(--star); }
+.kg-stars { display: inline-flex; gap: var(--space-4); }
+.kg-stars button { width: var(--size-touch); height: var(--size-touch); padding: 0; border: 0; background: transparent; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.kg-stars .an { fill: var(--star); stroke: var(--star); }
+.kg-stars .aus { fill: none; stroke: var(--star-empty); }
+
+/* Rezeptbild */
+.kg-bild { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-6); border-radius: var(--radius-card); overflow: hidden; color: var(--foto-platzhalter-ink); }
+.kg-bild-emoji { line-height: 1; }
+.kg-bild-foto { background: var(--foto-platzhalter); font-size: 12px; font-weight: 600; }
+.kg-bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.kg-bild-gruen { background: var(--tile-gruen); }
+.kg-bild-gelb { background: var(--tile-gelb); }
+.kg-bild-flieder { background: var(--tile-flieder); }
+.kg-bild-blau { background: var(--tile-blau); }
+.kg-bild-pfirsich { background: var(--tile-pfirsich); }
+.kg-bild-karte { height: var(--size-kartenbild); }
+.kg-bild-karte .kg-bild-emoji { font-size: 72px; }
+.kg-bild-woche { width: var(--size-tile-woche); height: var(--size-tile-woche); border-radius: var(--radius-tile); flex-shrink: 0; }
+.kg-bild-woche .kg-bild-emoji { font-size: 38px; }
+.kg-bild-liste { width: var(--size-search); height: var(--size-search); border-radius: var(--radius-thumb); flex-shrink: 0; }
+.kg-bild-liste .kg-bild-emoji { font-size: 28px; }
+.kg-bild-oben { position: absolute; top: var(--space-10); left: var(--space-10); right: var(--space-10); }
+.kg-bild-unten { position: absolute; right: var(--space-10); bottom: var(--space-10); }
+
+/* Rezeptkarte (Kachel) */
+.kg-raster { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-14); row-gap: var(--space-24); }
+.kg-karte { display: flex; flex-direction: column; gap: var(--space-10); color: inherit; text-decoration: none; }
+.kg-karte-quelle { color: var(--brand-text); }
+
+/* Rezeptzeile (Liste) */
+.kg-liste { list-style: none; margin: 0; padding: 0; }
+.kg-liste li { border-bottom: 1px solid var(--line); }
+.kg-zeile { display: flex; align-items: center; gap: var(--space-14); padding: var(--space-10) 0; color: inherit; text-decoration: none; }
+.kg-zeile-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.kg-zeile-text .titel-karte { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kg-zeile-text .meta { color: var(--ink-muted); }
+
+/* Suchfeld */
+.kg-search { display: flex; align-items: center; gap: var(--space-12); height: var(--size-search); padding: 0 18px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-field); color: var(--ink-muted); box-sizing: border-box; background: var(--surface); }
+.kg-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-family: inherit; font-size: 17px; color: var(--ink); }
+.kg-search input::placeholder { color: var(--ink-muted); }
+.kg-search:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Einkaufszeile */
+.kg-check { display: flex; align-items: center; gap: var(--space-14); min-height: 62px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.kg-check input { flex-shrink: 0; width: 24px; height: 24px; margin: 0; accent-color: var(--brand); }
+.kg-check-emoji { flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: var(--surface-cream); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+.kg-check-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.kg-check-name { font-size: 16px; font-weight: 600; }
+.kg-check-fuer { font-size: 13px; color: var(--ink-muted); }
+.kg-check-menge { font-size: 15px; font-weight: 600; }
+.kg-check input:checked ~ .kg-check-text .kg-check-name,
+.kg-check input:checked ~ .kg-check-menge { color: var(--ink-done); text-decoration: line-through; }
+.kg-check input:checked ~ .kg-check-emoji { opacity: 0.5; }
+
+/* Tab-Leiste */
+.kg-nav { height: var(--size-nav); padding: var(--space-10) var(--space-6) 18px; background: var(--surface); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); box-sizing: border-box; }
+.kg-nav a { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); color: var(--ink-muted); font-size: 12px; font-weight: 500; text-decoration: none; }
+.kg-nav a[aria-current="page"] { color: var(--brand-text); font-weight: 700; }
+
+/* Hinzufügen (FAB) */
+.kg-fab { width: var(--size-fab); height: var(--size-fab); border-radius: var(--radius-pill); background: var(--brand-bright); color: var(--on-brand); display: inline-flex; align-items: center; justify-content: center; box-shadow: var(--shadow-fab); text-decoration: none; }

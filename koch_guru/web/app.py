@@ -12,6 +12,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from notion_client import APIErrorCode, APIResponseError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.web import api
@@ -30,6 +33,31 @@ body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:
 background:#C2501E;color:#FFFFFF;font-family:system-ui,sans-serif;text-align:center;padding:24px;box-sizing:border-box}}
 h1{{font-family:Georgia,serif;font-size:40px;margin:0 0 12px}}p{{font-size:17px;margin:0;max-width:320px}}
 </style></head><body><main><h1>KochGuru</h1><p>{message}</p></main></body></html>"""
+
+
+class AppFiles(StaticFiles):
+    """The built front end. Unknown paths get index.html, so links like /rezepte work on reload.
+
+    Hashed files under assets/ never change and may be cached for a year; index.html and
+    the service worker must always be revalidated so updates reach the phones.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        if path == "api" or path.startswith("api/"):
+            raise StarletteHTTPException(status_code=404)
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            response = await super().get_response("index.html", scope)
+        if response.status_code == 404:
+            response = await super().get_response("index.html", scope)
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif not path.startswith("icons/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def page(message: str, status_code: int = 200) -> HTMLResponse:
@@ -83,7 +111,7 @@ def create_app(
         return response
 
     if static_dir and (static_dir / "index.html").is_file():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="app")
+        app.mount("/", AppFiles(directory=static_dir, html=True), name="app")
     else:
         @app.get("/", include_in_schema=False)
         async def placeholder(request: Request):
