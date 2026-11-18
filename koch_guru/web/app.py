@@ -8,6 +8,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -70,9 +71,12 @@ def create_app(
     users: dict[str, str],
     lifespan: Lifespan | None = None,
     static_dir: Path | None = None,
+    http: httpx.AsyncClient | None = None,
 ) -> FastAPI:
     app = FastAPI(title="KochGuru", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.repo = repo
+    # For cover photos; the server passes its shared client, tests may pass a mock.
+    app.state.http = http or httpx.AsyncClient(follow_redirects=True, timeout=20)
     app.state.users = users
     if not users:
         log.warning("APP_USERS ist leer: Niemand kann sich in der Web-App anmelden.")

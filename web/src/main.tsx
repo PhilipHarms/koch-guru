@@ -9,6 +9,9 @@ import './styles/components.css';
 import './styles/app.css';
 import { App } from './app';
 
+// The app restores the overview's scroll position itself when coming back from a recipe.
+if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+
 render(<App />, document.getElementById('app')!);
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {

@@ -9,7 +9,33 @@ export type Recipe = {
   ingredients: string[];
   this_week: boolean;
   emoji: string | null;
+  /** Cover photo through our server, or null. */
+  image: string | null;
   created: string | null;
+};
+
+export type TextRun = { text: string; href?: string; bold?: boolean; italic?: boolean };
+
+/** Simplified Notion blocks, see koch_guru/page_content.py. */
+export type Block =
+  | { type: 'heading'; level: 1 | 2 | 3; text: TextRun[] }
+  | { type: 'paragraph' | 'quote' | 'toggle'; text: TextRun[]; children?: Block[] }
+  | { type: 'bullet' | 'number'; text: TextRun[]; children?: Block[] }
+  | { type: 'todo'; text: TextRun[]; checked: boolean }
+  | { type: 'callout'; text: TextRun[]; emoji: string | null; children?: Block[] }
+  | { type: 'image'; url: string; caption: string }
+  | { type: 'link'; url: string; caption: string }
+  | { type: 'divider' };
+
+export type Ingredient = { name: string; amount: string | null; emoji: string | null } | { group: string };
+export type Step = { text: string } | { group: string };
+
+export type RecipeContent = {
+  minutes: number | null;
+  servings: string | null;
+  ingredients: Ingredient[];
+  steps: Step[];
+  blocks: Block[];
 };
 
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
@@ -46,6 +72,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   me: () => request<Me>('/api/me'),
   recipes: () => request<RecipeList>('/api/recipes'),
+  content: (id: string) => request<RecipeContent>(`/api/recipes/${encodeURIComponent(id)}/content`),
+  clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {
       method: 'PATCH',

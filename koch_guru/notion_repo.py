@@ -23,6 +23,13 @@ from koch_guru.services.importer import RecipeDraft, normalize_url
 log = logging.getLogger(__name__)
 
 LIST_TYPES = {"multi_select", "select", "rich_text"}
+# Page content: block types whose nested blocks the web app shows, and how far to follow them.
+NESTED_TYPES = {
+    "bulleted_list_item", "numbered_list_item", "to_do", "toggle", "quote", "callout",
+    "column_list", "column", "synced_block",
+}
+MAX_DEPTH = 3
+MAX_CHILD_REQUESTS = 20
 NO_ACCESS = {APIErrorCode.ObjectNotFound, APIErrorCode.RestrictedResource, APIErrorCode.Unauthorized}
 
 
@@ -161,12 +168,19 @@ def page_to_recipe(
         this_week=bool((props.get(mapping.this_week) or {}).get("checkbox")) if mapping.this_week else False,
         emoji=_page_emoji(page),
         created=page.get("created_time"),
+        cover=_page_cover(page),
     )
 
 
 def _page_emoji(page: dict[str, Any]) -> str | None:
     icon = page.get("icon") or {}
     return icon.get("emoji") if icon.get("type") == "emoji" else None
+
+
+def _page_cover(page: dict[str, Any]) -> str | None:
+    cover = page.get("cover") or {}
+    kind = cover.get("type")
+    return (cover.get(kind) or {}).get("url") or None if kind in ("external", "file") else None
 
 
 class RecipeRepository:
@@ -187,6 +201,8 @@ class RecipeRepository:
         self._cached_at = 0.0
         self._lock = asyncio.Lock()
         self._ingredient_warning_logged = False
+        self._ingredient_emojis: dict[str, str] = {}
+        self._content_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     @property
     def mapping(self) -> PropertyMapping | None:
@@ -257,8 +273,41 @@ class RecipeRepository:
                 self._ingredient_warning_logged = True
             return {}
         names = {p["id"]: name for p in pages if (name := _page_title(p))}
+        self._ingredient_emojis = {
+            names[p["id"]]: emoji for p in pages if p["id"] in names and (emoji := _page_emoji(p))
+        }
         log.info("%d Zutaten aus Notion geladen.", len(names))
         return names
+
+    @property
+    def ingredient_emojis(self) -> dict[str, str]:
+        """Ingredient name -> emoji icon from the ingredients database."""
+        return self._ingredient_emojis
+
+    async def page_blocks(self, page_id: str) -> list[dict[str, Any]]:
+        """Content of a recipe page, with nested blocks under "children". Cached like the list."""
+        cached = self._content_cache.get(page_id)
+        if cached and time.monotonic() - cached[0] < self._cache_seconds:
+            return cached[1]
+        budget = [MAX_CHILD_REQUESTS]
+        blocks = await self._block_children(page_id, 0, budget)
+        self._content_cache[page_id] = (time.monotonic(), blocks)
+        return blocks
+
+    async def _block_children(self, block_id: str, depth: int, budget: list[int]) -> list[dict[str, Any]]:
+        blocks = await async_collect_paginated_api(
+            self._client.blocks.children.list, block_id=block_id, page_size=100
+        )
+        for block in blocks:
+            if (
+                block.get("has_children")
+                and block.get("type") in NESTED_TYPES
+                and depth < MAX_DEPTH
+                and budget[0] > 0
+            ):
+                budget[0] -= 1  # each nested block costs a request; keep big pages fast
+                block["children"] = await self._block_children(block["id"], depth + 1, budget)
+        return blocks
 
     async def list_recipes(self, *, force_refresh: bool = False) -> list[Recipe]:
         """All recipes, cached for `cache_seconds`."""

@@ -47,7 +47,8 @@ def page(i, name, link=None, tags=(), origin=(), ingredients=(), this_week=False
 
 
 def ingredient_page(page_id, name):
-    return {"object": "page", "id": page_id, "properties": {"Name": {"type": "title", "title": text(name)}}}
+    return {"object": "page", "id": page_id, "icon": {"type": "emoji", "emoji": f"E{page_id[-1]}"},
+            "properties": {"Name": {"type": "title", "title": text(name)}}}
 
 
 def test_mapping_for_philips_schema():
@@ -122,6 +123,8 @@ class FakeNotion:
         self.reject_uploads = False
         self.uploads = []
         self.sent = []
+        self.blocks = {}
+        self.block_calls = []
 
     @staticmethod
     def error(status, code):
@@ -148,6 +151,10 @@ class FakeNotion:
             if not self.ingredients_shared:
                 return self.error(404, "object_not_found")
             return self.paginate([ingredient_page(k, v) for k, v in INGREDIENTS.items()], request)
+        if path.startswith("/v1/blocks/") and path.endswith("/children"):
+            block_id = path.split("/")[3]
+            self.block_calls.append(block_id)
+            return self.paginate(self.blocks.get(block_id, []), request)
         if path.endswith("/query"):
             self.query_calls += 1
             return self.paginate(self.pages, request)
@@ -345,3 +352,37 @@ async def test_find_existing_without_url_matches_by_name_only():
     assert (await repo.find_existing(RecipeDraft(name="Rezept 001", ingredients=["a"])))[1] == "name"
     assert await repo.find_existing(RecipeDraft(name="Neu", ingredients=["a"])) == (None, "")
     assert repo.origin_options == ["Green Feast (Autumn Winter)"]
+
+
+def test_cover_is_read_from_external_and_notion_files():
+    mapping = resolve_mapping(SCHEMA, PropertyNames())
+    external = {**page(1, "A"), "cover": {"type": "external", "external": {"url": "https://img.example/a.jpg"}}}
+    hosted = {**page(2, "B"), "cover": {"type": "file", "file": {"url": "https://s3.example/b.jpg?X-Amz-1"}}}
+    assert page_to_recipe(external, mapping).cover == "https://img.example/a.jpg"
+    assert page_to_recipe(hosted, mapping).cover == "https://s3.example/b.jpg?X-Amz-1"
+    assert page_to_recipe(page(3, "C"), mapping).cover is None
+
+
+async def test_ingredient_emojis_come_from_the_ingredient_pages():
+    repo = make_repo(FakeNotion(total=1))
+    await repo.list_recipes()
+    assert repo.ingredient_emojis == {"Gelbe Linsen": "E1", "Kurkuma": "E2", "Süßkartoffel": "E3"}
+
+
+async def test_page_blocks_follow_nested_items_and_are_cached():
+    fake = FakeNotion(total=1)
+    fake.blocks = {
+        "page-1": [
+            {"object": "block", "id": "b1", "type": "bulleted_list_item", "has_children": True,
+             "bulleted_list_item": {"rich_text": text("Tomaten")}},
+            {"object": "block", "id": "b2", "type": "child_page", "has_children": True, "child_page": {}},
+        ],
+        "b1": [{"object": "block", "id": "b3", "type": "bulleted_list_item", "has_children": False,
+                "bulleted_list_item": {"rich_text": text("Kirschtomaten")}}],
+    }
+    repo = make_repo(fake)
+    blocks = await repo.page_blocks("page-1")
+    assert blocks[0]["children"][0]["id"] == "b3"
+    assert "children" not in blocks[1]  # sub-pages are not opened
+    await repo.page_blocks("page-1")
+    assert fake.block_calls == ["page-1", "b1"]

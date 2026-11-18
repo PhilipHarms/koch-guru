@@ -39,7 +39,9 @@ def build_server_app(settings: Settings) -> FastAPI:
             await stop_bot(bot)
             await core.aclose()
 
-    return create_app(repo=core.repo, users=settings.app_users, lifespan=lifespan, static_dir=STATIC_DIR)
+    return create_app(
+        repo=core.repo, users=settings.app_users, lifespan=lifespan, static_dir=STATIC_DIR, http=core.http
+    )
 
 
 def run() -> None:
