@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { Recipe } from '../lib/api';
 import { load, save } from '../lib/storage';
-import { fold, hostOf } from '../lib/text';
+import { hostOf } from '../lib/text';
+import { queryWords, searchScore } from '../lib/search';
 import { tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, SucheIcon } from '../components/icons';
@@ -38,12 +39,6 @@ function buildChips(recipes: Recipe[]): Chip[] {
       matches: (r: Recipe) => r.origin.includes(origin),
     }));
   return [...tags, ...origins];
-}
-
-function matchesQuery(recipe: Recipe, words: string[]): boolean {
-  if (!words.length) return true;
-  const haystack = fold([recipe.name, ...recipe.ingredients, ...recipe.origin, ...recipe.tags].join(' '));
-  return words.every((word) => haystack.includes(word));
 }
 
 function RecipeCard({ recipe }: { recipe: Recipe }) {
@@ -85,14 +80,20 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
 
   const chips = useMemo(() => buildChips(recipes), [recipes]);
 
+  const words = useMemo(() => queryWords(query), [query]);
+  const searching = words.length > 0;
+
   const shown = useMemo(() => {
-    const words = fold(query).split(/\s+/).filter(Boolean);
     const active = chips.filter((chip) => selected.includes(chip.key));
-    const list = recipes.filter((r) => matchesQuery(r, words) && active.every((chip) => chip.matches(r)));
-    return sort === 'name'
-      ? [...list].sort((a, b) => a.name.localeCompare(b.name, 'de'))
-      : [...list].sort((a, b) => (b.created || '').localeCompare(a.created || ''));
-  }, [recipes, query, selected, chips, sort]);
+    const bySort = (a: Recipe, b: Recipe) =>
+      sort === 'name' ? a.name.localeCompare(b.name, 'de') : (b.created || '').localeCompare(a.created || '');
+    const list = recipes
+      .filter((r) => active.every((chip) => chip.matches(r)))
+      .map((recipe) => ({ recipe, score: searching ? searchScore(recipe, words) : 1 }))
+      .filter((hit) => hit.score > 0);
+    // While searching, the best matches come first; the chosen order only breaks ties.
+    return list.sort((a, b) => b.score - a.score || bySort(a.recipe, b.recipe)).map((hit) => hit.recipe);
+  }, [recipes, words, searching, selected, chips, sort]);
 
   const chooseView = (next: View) => {
     setView(next);
@@ -145,11 +146,15 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
       )}
 
       <div class="page-pad toolbar">
-        <button type="button" class="sort-button" onClick={toggleSort}>
-          <span class="meta">Sortiert nach</span>
-          {SORT_LABEL[sort]}
-          <AufklappenIcon size={18} />
-        </button>
+        {searching ? (
+          <p class="sort-button">Beste Treffer zuerst</p>
+        ) : (
+          <button type="button" class="sort-button" onClick={toggleSort}>
+            <span class="meta">Sortiert nach</span>
+            {SORT_LABEL[sort]}
+            <AufklappenIcon size={18} />
+          </button>
+        )}
         <div class="kg-seg" role="group" aria-label="Ansicht">
           <button type="button" aria-pressed={view === 'kacheln'} aria-label="Kachelansicht" onClick={() => chooseView('kacheln')}>
             <KachelnIcon size={20} />
