@@ -388,6 +388,7 @@ def parse_content(
     section: str | None = None
     guess: str | None = None  # "ingredients" or "steps" while reading a page without headings; "off" after
     has_ingredient_list = False
+    numbered_open = False  # inside the numbered list that was taken as the steps
 
     def add_ingredients(lines: list[str]) -> None:
         for line in lines:
@@ -461,6 +462,15 @@ def parse_content(
                     steps.extend({"text": text} for line in lines if (text := _step_text(line)))
                     continue
                 guess = "off"
+        if kind == "numbered_list_item" and section is None and not has_step_marker:
+            lines = _lines(block)
+            # A numbered list of sentences is the method, wherever it stands on the page:
+            # the first such list counts, later ones stay notes.
+            if numbered_open or (not steps and all(_is_step(line) for line in lines)):
+                numbered_open = True
+                steps.extend({"text": text} for line in lines if (text := _step_text(line)))
+                continue
+        numbered_open = False
         rest.extend(_simple(block))
 
     if not has_ingredient_list:

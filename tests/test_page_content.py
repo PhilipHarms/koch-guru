@@ -296,3 +296,19 @@ def test_oven_temperatures_in_celsius():
     assert german_temperatures("Bake at 350 degrees F for 25 minutes") == "Bake at 180 °C for 25 minutes"
     assert german_temperatures("Bake at 200°C/400°F") == "Bake at 200°C/400°F"
     assert german_temperatures("Bake 25 minutes") == "Bake 25 minutes"
+
+
+def test_numbered_list_of_sentences_is_the_method():
+    # Like Philip's page with "Teig:", "Gemüse anbraten:" ... as a numbered list under a photo.
+    blocks = [
+        image("https://img.example/a.jpg", "external"),
+        block("numbered_list_item", "Teig: 125 ml Milch lauwarm erhitzen, mit 200 ml Wasser und Hefe verrühren."),
+        block("numbered_list_item", "Gemüse anbraten: 1 Gemüsezwiebel und je 1 rote und grüne Paprika würfeln."),
+        block("numbered_list_item", "Backen."),
+        block("paragraph", "Schmeckt auch mit Lamm."),
+        block("numbered_list_item", "Beim nächsten Mal mehr Kreuzkümmel nehmen und länger backen."),
+    ]
+    content = parse_content(blocks, ingredients=["Petersilie"])
+    assert [s["text"][:16] for s in content["steps"]] == ["Teig: 125 ml Mil", "Gemüse anbraten:", "Backen."]
+    assert [b["type"] for b in content["blocks"]] == ["image", "paragraph", "number"]
+    assert content["ingredients"] == [{"name": "Petersilie", "amount": None, "emoji": None}]
