@@ -464,8 +464,11 @@ class RecipeRepository:
         *,
         draft: RecipeDraft,
         link: list[tuple[str, str | None]],
+        cover: str | None = None,
     ) -> list[str]:
-        """Append ingredients and steps to the page and link ingredients to it.
+        """Append ingredients and steps to the page, link ingredients and set the cover.
+
+        `cover` is an image address, set as the page cover like an import in the bot does.
 
         `link` holds (ingredient name, emoji). Names from the ingredients database are
         linked; other names get a new page there first. Links that are already set stay.
@@ -475,6 +478,11 @@ class RecipeRepository:
             await self.connect()
         assert self._mapping
         await self._client.blocks.children.append(block_id=page_id, children=draft_blocks(draft))
+        if cover:
+            try:
+                await self._client.pages.update(page_id=page_id, cover={"type": "external", "external": {"url": cover}})
+            except APIResponseError as exc:  # a missing photo is no reason to fail the save
+                log.warning("Titelbild nicht gesetzt: %s", exc.code)
 
         not_created: list[str] = []
         ids: list[str] = []

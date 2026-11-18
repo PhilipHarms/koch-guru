@@ -212,6 +212,7 @@ class GeneratedSave(BaseModel):
     minutes: int | None = Field(default=None, ge=0, le=10_000)
     ingredients: list[GeneratedLine] = Field(max_length=80)
     steps: list[str] = Field(max_length=60)
+    cover: str | None = Field(default=None, max_length=2000)  # photo to set as the page cover
 
 
 @router.post("/recipes/{recipe_id}/generate/save")
@@ -228,7 +229,8 @@ async def save_generated_recipe(recipe_id: str, body: GeneratedSave, request: Re
         total_minutes=body.minutes or None,
     )
     links = [(i.zutat.strip(), i.emoji) for i in body.ingredients if i.link and i.zutat.strip()]
-    not_created = await repo.save_generated(recipe.id, draft=draft, link=links)
+    cover = body.cover if body.cover and body.cover.startswith("https://") and not recipe.cover else None
+    not_created = await repo.save_generated(recipe.id, draft=draft, link=links, cover=cover)
     return {"recipe": recipe_json(await find_recipe(repo, recipe.id)), "not_created": not_created}
 
 

@@ -233,3 +233,7 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .generiert-new { color: var(--brand-text); }
 .generiert-aus { color: var(--ink-muted); }
 .hinweis { margin: 0; padding: var(--space-12) var(--space-16); border-radius: var(--radius-field); background: var(--surface-cream); }
+.generiert-bild { display: flex; flex-direction: column; gap: var(--space-8); cursor: pointer; }
+.generiert-bild img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius-field); background: var(--foto-platzhalter); }
+.generiert-bild-wahl { display: flex; align-items: center; gap: var(--space-10); }
+.generiert-bild-wahl input { width: 22px; height: 22px; margin: 0; accent-color: var(--brand); }

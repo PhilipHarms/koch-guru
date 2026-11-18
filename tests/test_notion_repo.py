@@ -418,8 +418,10 @@ async def test_save_generated_appends_content_and_adds_links():
     draft = RecipeDraft(name="Rezept 001", url="https://example.com/r", ingredients=["2 EL Kurkuma", "200 g Pak Choi"],
                         steps=["Kochen."], servings="2 Portionen", total_minutes=20)
     not_created = await repo.save_generated(
-        "page-1", draft=draft, link=[("Kurkuma", "🫙"), ("gelbe linsen", None), ("Pak Choi", "🥬")]
+        "page-1", draft=draft, link=[("Kurkuma", "🫙"), ("gelbe linsen", None), ("Pak Choi", "🥬")],
+        cover="https://example.com/r.jpg",
     )
+    assert ("page-1", {"cover": {"type": "external", "external": {"url": "https://example.com/r.jpg"}}}) in fake.updates
     assert not_created == []
     (block_id, children), = fake.appended
     assert block_id == "page-1"

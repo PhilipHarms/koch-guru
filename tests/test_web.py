@@ -46,8 +46,8 @@ class FakeRepo:
     ingredient_icons = {"Kürbis": "🎃", "Linsen": "🫘"}
     ingredient_names = ["Kürbis", "Linsen", "Salz"]
 
-    async def save_generated(self, page_id, *, draft, link):
-        self.saved = (page_id, draft, link)
+    async def save_generated(self, page_id, *, draft, link, cover=None):
+        self.saved = (page_id, draft, link, cover)
         return [name for name, _ in link if name == "Unbekannt"]
 
     async def page_blocks(self, page_id):
@@ -321,13 +321,16 @@ def test_generate_preview_and_save():
     assert [(i["zutat"], i["status"], i["include"]) for i in preview["ingredients"]] == [
         ("Kürbis", "linked", True), ("Salz", "existing", False),
     ]
+    assert preview["image"] is None  # the test page has no photo
     body = {"url": preview["url"], "servings": preview["servings"], "minutes": None, "steps": preview["steps"],
+            "cover": "https://example.com/dal.jpg",
             "ingredients": [{"line": i["line"], "zutat": i["zutat"], "emoji": i["emoji"], "link": i["include"]}
                             for i in preview["ingredients"]] + [{"line": "1 Stück", "zutat": "Unbekannt", "link": True}]}
     saved = c.post(f"/api/recipes/{DAL_ID}/generate/save", json=body).json()
     assert saved["not_created"] == ["Unbekannt"]
     assert saved["recipe"]["id"] == DAL_ID
-    page_id, draft, link = repo.saved
+    page_id, draft, link, cover = repo.saved
+    assert cover == "https://example.com/dal.jpg"
     assert page_id == DAL_ID and draft.ingredients == ["500 g Kürbis", "1 Prise Salz", "1 Stück"]
     assert draft.url == "https://example.com/dal" and draft.servings == "4 Portionen"
     assert link == [("Kürbis", "🎃"), ("Unbekannt", None)]

@@ -60,7 +60,8 @@ async def test_prepare_matches_ingredients_and_preselects():
 
 JSONLD_PAGE = """<html><head><script type="application/ld+json">
 {"@type": "Recipe", "name": "Sticky Tofu", "recipeIngredient": ["300g firm tofu", "2 tbsp soy sauce"],
- "recipeInstructions": ["Bake the tofu.", "Add the sauce."], "recipeYield": "2"}
+ "recipeInstructions": ["Bake the tofu.", "Add the sauce."], "recipeYield": "2",
+ "image": "https://example.com/tofu.jpg"}
 </script></head><body></body></html>"""
 
 
@@ -79,6 +80,7 @@ async def test_generate_from_link_with_jsonld_needs_one_model_call():
     result = await generate(link="https://example.com/tofu", notes="", photo_urls=[], http=http, llm=llm,
                             known=KNOWN, linked=[])
     assert llm.calls == [PreparedRecipe]
+    assert result.image == "https://example.com/tofu.jpg"
     assert [i.line for i in result.ingredients] == ["300 g fester Tofu", "2 EL Sojasauce"]
     assert result.steps == ["Tofu backen.", "Soße dazugeben."]
 

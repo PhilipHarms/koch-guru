@@ -116,11 +116,13 @@ class GeneratedRecipe:
     steps: list[str] = field(default_factory=list)
     servings: str | None = None
     minutes: int | None = None
+    image: str | None = None  # the recipe photo of the linked page, for the Notion cover
 
     def as_json(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "url": self.url,
+            "image": self.image,
             "servings": self.servings,
             "minutes": self.minutes,
             "ingredients": [i.as_json() for i in self.ingredients],
@@ -214,6 +216,7 @@ async def prepare(
         steps=[s.strip() for s in result.schritte if s.strip()] or draft.steps,
         servings=result.portionen.strip() or draft.servings,
         minutes=draft.total_minutes,
+        image=draft.image if draft.image and draft.image.startswith("https://") else None,
     )
 
 
@@ -248,5 +251,5 @@ async def generate(
         raise RecipeImportError("Im Rezept habe ich keine Zutaten gefunden.")
     result = await prepare(draft, llm, known, linked)
     if draft.source in ("notes",):
-        result.source, result.url = "Notizen", None
+        result.source, result.url, result.image = "Notizen", None, None
     return result
