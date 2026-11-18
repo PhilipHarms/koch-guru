@@ -44,6 +44,11 @@ class FakeRepo:
                         for r in self.recipes]
 
     ingredient_icons = {"Kürbis": "🎃", "Linsen": "🫘"}
+    ingredient_names = ["Kürbis", "Linsen", "Salz"]
+
+    async def save_generated(self, page_id, *, draft, link):
+        self.saved = (page_id, draft, link)
+        return [name for name, _ in link if name == "Unbekannt"]
 
     async def page_blocks(self, page_id):
         self.content_requests = getattr(self, "content_requests", []) + [page_id]
@@ -290,3 +295,46 @@ def test_suggest_errors():
     assert signed_in(llm=FakeLLM(fail=True)).post("/api/suggest", json={"wish": "Pasta"}).status_code == 502
     assert signed_in(llm=FakeLLM()).post("/api/suggest", json={"wish": ""}).status_code == 422
     assert client(llm=FakeLLM()).post("/api/suggest", json={"wish": "Pasta"}).status_code == 401
+
+
+class GenerateLLM:
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.services.generate import PreparedIngredient, PreparedRecipe
+        assert output_type is PreparedRecipe
+        return PreparedRecipe(zutaten=[
+            PreparedIngredient(zeile="500 g Kürbis", zutat="Kürbis", emoji="🎃", immer_da=False),
+            PreparedIngredient(zeile="1 Prise Salz", zutat="Salz", emoji="🧂", immer_da=True),
+        ], schritte=["Kochen."], portionen="4 Portionen")
+
+
+DAL_PAGE = """<script type="application/ld+json">{"@type": "Recipe", "name": "Dal",
+ "recipeIngredient": ["500 g Kürbis", "Salz"], "recipeInstructions": "Kochen."}</script>"""
+
+
+def test_generate_preview_and_save():
+    http = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text=DAL_PAGE, headers={"content-type": "text/html"})))
+    repo = FakeRepo()
+    c = signed_in(repo, http=http, llm=GenerateLLM())
+    preview = c.post(f"/api/recipes/{DAL_ID}/generate").json()
+    assert preview["source"] == "https://example.com/dal"
+    assert [(i["zutat"], i["status"], i["include"]) for i in preview["ingredients"]] == [
+        ("Kürbis", "linked", True), ("Salz", "existing", False),
+    ]
+    body = {"url": preview["url"], "servings": preview["servings"], "minutes": None, "steps": preview["steps"],
+            "ingredients": [{"line": i["line"], "zutat": i["zutat"], "emoji": i["emoji"], "link": i["include"]}
+                            for i in preview["ingredients"]] + [{"line": "1 Stück", "zutat": "Unbekannt", "link": True}]}
+    saved = c.post(f"/api/recipes/{DAL_ID}/generate/save", json=body).json()
+    assert saved["not_created"] == ["Unbekannt"]
+    assert saved["recipe"]["id"] == DAL_ID
+    page_id, draft, link = repo.saved
+    assert page_id == DAL_ID and draft.ingredients == ["500 g Kürbis", "1 Prise Salz", "1 Stück"]
+    assert draft.url == "https://example.com/dal" and draft.servings == "4 Portionen"
+    assert link == [("Kürbis", "🎃"), ("Unbekannt", None)]
+
+
+def test_generate_errors():
+    assert signed_in().post(f"/api/recipes/{DAL_ID}/generate").status_code == 503  # no model
+    pasta = signed_in(llm=GenerateLLM()).post(f"/api/recipes/{PASTA_ID}/generate")  # no link, no photos
+    assert pasta.status_code == 422 and "weder einen Link" in pasta.json()["detail"]
+    assert client(llm=GenerateLLM()).post(f"/api/recipes/{DAL_ID}/generate").status_code == 401

@@ -132,6 +132,16 @@ def _simple(block: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def image_urls(blocks: Iterable[dict[str, Any]]) -> list[str]:
+    """Addresses of all photos on a page, nested ones included, in page order."""
+    urls: list[str] = []
+    for block in blocks:
+        if block.get("type") == "image" and (url := _file_url(block.get("image") or {})):
+            urls.append(url)
+        urls.extend(image_urls(block.get("children") or []))
+    return urls
+
+
 # --- Ingredients ---------------------------------------------------------------------
 
 
@@ -153,6 +163,28 @@ def _mentions(words: list[str], text: str, name: str) -> bool:
         if len(word) >= 2 and name.startswith(word) and len(name) - len(word) <= 2:
             return True
     return False
+
+
+def best_match(text: str, names: Iterable[str]) -> str | None:
+    """The name from `names` that `text` means: the same word first, else the most specific mention.
+
+    "Kirschtomaten" finds "Tomate", "Ei" finds "Eier", "Mehl" finds "Mehl 405".
+    """
+    folded, words = fold(text).strip(), _words(text)
+    best: tuple[int, int, str] | None = None
+    for name in names:
+        key = fold(_clean_name(name))
+        if not key:
+            continue
+        if key == folded or fold(name) == folded:
+            rank = 2
+        elif _mentions(words, folded, key):
+            rank = 1
+        else:
+            continue
+        if best is None or (rank, len(key)) > best[:2]:
+            best = (rank, len(key), name)
+    return best[2] if best else None
 
 
 class IconFinder:

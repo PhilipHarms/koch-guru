@@ -125,6 +125,8 @@ class FakeNotion:
         self.sent = []
         self.blocks = {}
         self.block_calls = []
+        self.appended = []
+        self.reject_ingredients = False
 
     @staticmethod
     def error(status, code):
@@ -151,7 +153,7 @@ class FakeNotion:
             if not self.ingredients_shared:
                 return self.error(404, "object_not_found")
             return self.paginate([ingredient_page(k, v) for k, v in INGREDIENTS.items()], request)
-        if path.startswith("/v1/blocks/") and path.endswith("/children"):
+        if path.startswith("/v1/blocks/") and path.endswith("/children") and request.method == "GET":
             block_id = path.split("/")[3]
             self.block_calls.append(block_id)
             return self.paginate(self.blocks.get(block_id, []), request)
@@ -173,7 +175,18 @@ class FakeNotion:
             self.created.append(body)
             if self.reject_icons and "icon" in body:
                 return self.error(400, "validation_error")
+            if (body.get("parent") or {}).get("data_source_id") == ING_DS:
+                if self.reject_ingredients:
+                    return self.error(403, "restricted_resource")
+                return httpx.Response(200, json={"object": "page", "id": f"ing-new-{len(self.created)}"})
             return httpx.Response(200, json=page(500, "Neues Rezept", "https://example.com/r"))
+        if path.startswith("/v1/blocks/") and path.endswith("/children") and request.method == "PATCH":
+            self.appended.append((path.split("/")[3], json.loads(request.content)["children"]))
+            return httpx.Response(200, json={"object": "list", "results": [], "has_more": False, "next_cursor": None})
+        if path.startswith("/v1/pages/") and request.method == "GET":
+            page_id = path.rsplit("/", 1)[1]
+            found = next((p for p in self.pages if p["id"] == page_id), None)
+            return httpx.Response(200, json=found) if found else self.error(404, "object_not_found")
         if path.startswith("/v1/pages/") and request.method == "PATCH":
             page_id = path.rsplit("/", 1)[1]
             self.updates.append((page_id, json.loads(request.content)))
@@ -395,3 +408,57 @@ def test_page_icon_kinds():
     custom = {"icon": {"type": "custom_emoji", "custom_emoji": {"id": "1", "name": "x", "url": "https://s3.example/x.png"}}}
     assert page_icon(custom) == "https://s3.example/x.png"
     assert page_icon({"icon": None}) is None
+
+
+async def test_save_generated_appends_content_and_adds_links():
+    fake = FakeNotion(total=3)
+    fake.pages[1] = page(1, "Rezept 001", ingredients=["ing-2"])
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    draft = RecipeDraft(name="Rezept 001", url="https://example.com/r", ingredients=["2 EL Kurkuma", "200 g Pak Choi"],
+                        steps=["Kochen."], servings="2 Portionen", total_minutes=20)
+    not_created = await repo.save_generated(
+        "page-1", draft=draft, link=[("Kurkuma", "🫙"), ("gelbe linsen", None), ("Pak Choi", "🥬")]
+    )
+    assert not_created == []
+    (block_id, children), = fake.appended
+    assert block_id == "page-1"
+    texts = [c[c["type"]]["rich_text"][0]["text"]["content"] for c in children if c[c["type"]].get("rich_text")]
+    assert "Zutaten" in texts and "Zubereitung" in texts and "2 EL Kurkuma" in texts
+    created = [b for b in fake.created if b["parent"].get("data_source_id") == ING_DS]
+    assert [b["properties"]["Name"]["title"][0]["text"]["content"] for b in created] == ["Pak Choi"]
+    assert created[0]["icon"] == {"type": "emoji", "emoji": "🥬"}
+    page_id, update = fake.updates[-1]
+    assert page_id == "page-1"
+    assert update["properties"]["Ingredients"]["relation"] == [{"id": "ing-2"}, {"id": "ing-1"}, {"id": "ing-new-1"}]
+    assert "Pak Choi" in repo.ingredient_names
+
+
+async def test_save_generated_without_edit_access_to_ingredients():
+    fake = FakeNotion(total=2)
+    fake.reject_ingredients = True
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    draft = RecipeDraft(name="Rezept 000", ingredients=["200 g Pak Choi"], steps=[])
+    assert await repo.save_generated("page-0", draft=draft, link=[("Pak Choi", "🥬")]) == ["Pak Choi"]
+    assert len(fake.appended) == 1
+    assert not [u for u in fake.updates if "Ingredients" in u[1].get("properties", {})]
+
+
+async def test_save_generated_reports_links_it_could_not_set():
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    original = fake.handler
+
+    def no_page_updates(request):
+        if request.method == "PATCH" and request.url.path.startswith("/v1/pages/"):
+            return fake.error(403, "restricted_resource")
+        return original(request)
+
+    fake.handler = no_page_updates
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    draft = RecipeDraft(name="Rezept 000", ingredients=["1 Süßkartoffel"], steps=["Kochen."])
+    assert await repo.save_generated("page-0", draft=draft, link=[("Süßkartoffel", None)]) == ["Süßkartoffel"]
+    assert len(fake.appended) == 1

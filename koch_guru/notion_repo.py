@@ -221,6 +221,8 @@ class RecipeRepository:
         self._lock = asyncio.Lock()
         self._ingredient_warning_logged = False
         self._ingredient_icons: dict[str, str] = {}
+        self._ingredient_ids: dict[str, str] = {}  # name -> page id
+        self._ingredient_source: tuple[str, str] | None = None  # (data source id, title property)
         self._content_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     @property
@@ -292,6 +294,12 @@ class RecipeRepository:
                 self._ingredient_warning_logged = True
             return {}
         names = {p["id"]: name for p in pages if (name := _page_title(p))}
+        self._ingredient_ids = {name: page_id for page_id, name in names.items()}
+        title_prop = next(
+            (key for p in pages for key, prop in p.get("properties", {}).items() if prop.get("type") == "title"),
+            None,
+        )
+        self._ingredient_source = (data_source_id, title_prop) if title_prop else None
         self._ingredient_icons = {
             names[p["id"]]: icon for p in pages if p["id"] in names and (icon := page_icon(p))
         }
@@ -302,6 +310,11 @@ class RecipeRepository:
             ", ".join(f"{count} {kind}" for kind, count in kinds.most_common()),
         )
         return names
+
+    @property
+    def ingredient_names(self) -> list[str]:
+        """All names in the ingredients database."""
+        return sorted(self._ingredient_ids, key=str.casefold)
 
     @property
     def ingredient_icons(self) -> dict[str, str]:
@@ -441,6 +454,95 @@ class RecipeRepository:
         except APIResponseError as exc:
             log.warning("Foto-Upload zu Notion fehlgeschlagen (%s), speichere ohne Foto.", exc.code)
             return []
+        return ids
+
+    # --- Filling a page with a generated recipe -------------------------------------
+
+    async def save_generated(
+        self,
+        page_id: str,
+        *,
+        draft: RecipeDraft,
+        link: list[tuple[str, str | None]],
+    ) -> list[str]:
+        """Append ingredients and steps to the page and link ingredients to it.
+
+        `link` holds (ingredient name, emoji). Names from the ingredients database are
+        linked; other names get a new page there first. Links that are already set stay.
+        Returns the names that could not be created or linked (e.g. without edit access).
+        """
+        if self._mapping is None:
+            await self.connect()
+        assert self._mapping
+        await self._client.blocks.children.append(block_id=page_id, children=draft_blocks(draft))
+
+        not_created: list[str] = []
+        ids: list[str] = []
+        if self._mapping.ingredients_kind == "relation" and self._mapping.ingredients:
+            by_key = {name.casefold(): page_id for name, page_id in self._ingredient_ids.items()}
+            for name, emoji in link:
+                found = by_key.get(name.casefold())
+                if found is None:
+                    found = await self._create_ingredient(name, emoji)
+                    if found is None:
+                        not_created.append(name)
+                        continue
+                    by_key[name.casefold()] = found
+                if found not in ids:
+                    ids.append(found)
+            if ids:
+                try:
+                    current = await self._relation_ids(page_id, self._mapping.ingredients)
+                    merged = current + [i for i in ids if i not in current]
+                    if merged != current:
+                        await self._client.pages.update(
+                            page_id=page_id,
+                            properties={self._mapping.ingredients: {"relation": [{"id": i} for i in merged]}},
+                        )
+                except APIResponseError as exc:
+                    # The content is on the page already; report the links instead of failing.
+                    log.warning("Zutaten nicht verknüpft: %s", exc.code)
+                    not_created = [name for name, _ in link]
+        self._content_cache.pop(page_id, None)
+        self._cache = None  # reload ingredients and links on next access
+        return not_created
+
+    async def _create_ingredient(self, name: str, emoji: str | None) -> str | None:
+        if self._ingredient_source is None:
+            return None
+        data_source_id, title_prop = self._ingredient_source
+        kwargs: dict[str, Any] = {
+            "parent": {"type": "data_source_id", "data_source_id": data_source_id},
+            "properties": {title_prop: {"title": [_text(name)]}},
+        }
+        if emoji:
+            kwargs["icon"] = {"type": "emoji", "emoji": emoji}
+        try:
+            try:
+                page = await self._client.pages.create(**kwargs)
+            except APIResponseError as exc:
+                if exc.code != APIErrorCode.ValidationError or "icon" not in kwargs:
+                    raise
+                kwargs.pop("icon")  # Notion does not know every emoji
+                page = await self._client.pages.create(**kwargs)
+        except APIResponseError as exc:
+            log.warning("Zutat %r nicht angelegt: %s", name, exc.code)
+            return None
+        self._ingredient_ids[name] = page["id"]
+        if emoji:
+            self._ingredient_icons[name] = emoji
+        return page["id"]
+
+    async def _relation_ids(self, page_id: str, prop_name: str) -> list[str]:
+        page = await self._client.pages.retrieve(page_id=page_id)
+        prop = (page.get("properties") or {}).get(prop_name) or {}
+        ids = [ref["id"] for ref in prop.get("relation") or []]
+        if prop.get("has_more") and prop.get("id"):
+            # Page objects list only 25 relations; the property endpoint has them all.
+            items = await async_collect_paginated_api(
+                self._client.pages.properties.retrieve, page_id=page_id, property_id=prop["id"]
+            )
+            ids = [item["relation"]["id"] for item in items if item.get("type") == "relation"]
         return ids
 
     def _update_cached(self, page_id: str, value: bool) -> None:

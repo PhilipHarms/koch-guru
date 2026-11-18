@@ -1,7 +1,7 @@
 import { Fragment, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { api, type Block, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
+import { api, type Block, type GeneratedIngredient, type GeneratedRecipe, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
 import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, sameId, sourceLink, sourceOf } from '../lib/recipe';
@@ -26,6 +26,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [weekError, setWeekError] = useState<string | null>(null);
+  const [notCreated, setNotCreated] = useState<string[]>([]);
 
   useEffect(() => window.scrollTo(0, 0), [recipe.id]);
 
@@ -119,7 +120,18 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
           </div>
         )}
         {ready && <Ingredients content={ready} />}
-        {ready && <Steps content={ready} link={link} />}
+        {notCreated.length > 0 && (
+          <p class="text-klein hinweis" role="status">
+            Rezept gespeichert, aber nicht verknüpft: {notCreated.join(', ')}. Dafür braucht KochGuru in Notion
+            Schreibrechte auf die Zutaten-Datenbank.
+          </p>
+        )}
+        {ready && (
+          <Steps recipe={recipe} content={ready} link={link} onGenerated={(missing) => {
+            setNotCreated(missing);
+            setAttempt((n) => n + 1);
+          }} />
+        )}
         {ready && ready.blocks.length > 0 && (
           <section class="rezept-abschnitt notizen" aria-label="Weitere Inhalte aus Notion">
             {ready.blocks[0].type !== 'heading' && <h2 class="abschnitt">Notizen</h2>}
@@ -169,20 +181,16 @@ function initialOf(name: string): string {
   return name.match(/\p{L}/u)?.[0].toLocaleUpperCase('de') ?? '·';
 }
 
-function Steps({ content, link }: { content: RecipeContent; link: string | null }) {
+type StepsProps = { recipe: Recipe; content: RecipeContent; link: string | null; onGenerated: (notCreated: string[]) => void };
+
+function Steps({ recipe, content, link, onGenerated }: StepsProps) {
   let number = 0;
+  const hasPhotos = content.blocks.some((b) => b.type === 'image');
   return (
     <section class="rezept-abschnitt" aria-labelledby="zubereitung-titel">
       <h2 id="zubereitung-titel" class="abschnitt">Zubereitung</h2>
       {content.steps.length === 0 ? (
-        <div class="leer-box">
-          <p class="text-klein">In Notion stehen noch keine Schritte.</p>
-          {link && (
-            <a class="rezept-link" href={link} target="_blank" rel="noopener noreferrer">
-              <ExternIcon size={18} />Im Originalrezept nachlesen
-            </a>
-          )}
-        </div>
+        <Generate recipe={recipe} link={link} canGenerate={Boolean(link) || hasPhotos} onSaved={onGenerated} />
       ) : (
         <ol class="schritte">
           {content.steps.map((step, index) => {
@@ -198,6 +206,155 @@ function Steps({ content, link }: { content: RecipeContent; link: string | null 
         </ol>
       )}
     </section>
+  );
+}
+
+// --- Rezept generieren -----------------------------------------------------------------
+
+type GenerateState =
+  | { kind: 'idle' }
+  | { kind: 'reading' }
+  | { kind: 'preview'; value: GeneratedRecipe; include: boolean[]; saving: boolean }
+  | { kind: 'error'; message: string };
+
+function statusText(item: GeneratedIngredient, include: boolean): string {
+  if (item.status === 'linked') return 'schon verknüpft';
+  if (!include) return item.staple ? 'immer da, wird nicht verknüpft' : 'wird nicht verknüpft';
+  return item.status === 'existing' ? `verknüpft mit „${item.zutat}“` : `wird als „${item.zutat}“ neu angelegt`;
+}
+
+function Generate({ recipe, link, canGenerate, onSaved }: {
+  recipe: Recipe;
+  link: string | null;
+  canGenerate: boolean;
+  onSaved: (notCreated: string[]) => void;
+}) {
+  const { updateRecipe } = useData();
+  const [state, setState] = useState<GenerateState>({ kind: 'idle' });
+
+  const read = async () => {
+    setState({ kind: 'reading' });
+    try {
+      const value = await api.generate(recipe.id);
+      setState({ kind: 'preview', value, include: value.ingredients.map((i) => i.include), saving: false });
+    } catch (error) {
+      setState({ kind: 'error', message: messageOf(error) });
+    }
+  };
+
+  if (state.kind === 'idle' || state.kind === 'error') {
+    return (
+      <div class="leer-box">
+        <p class="text-klein">In Notion stehen noch keine Schritte.</p>
+        {canGenerate && (
+          <p class="text-klein muted">
+            KochGuru kann Zutaten und Schritte {link ? 'aus dem Originalrezept' : 'von den Fotos'} holen, auf Deutsch.
+            Du siehst sie vorher, gespeichert wird erst auf deinen Wunsch.
+          </p>
+        )}
+        {state.kind === 'error' && <p class="fehler" role="alert">{state.message}</p>}
+        {canGenerate && (
+          <button type="button" class="kg-btn kg-btn-primaer" onClick={read}>
+            {state.kind === 'error' ? 'Nochmal versuchen' : 'Rezept generieren'}
+          </button>
+        )}
+        {link && (
+          <a class="rezept-link" href={link} target="_blank" rel="noopener noreferrer">
+            <ExternIcon size={18} />Im Originalrezept nachlesen
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  if (state.kind === 'reading') {
+    return (
+      <div class="leer-box" aria-live="polite">
+        <p class="text-klein">KochGuru liest das Rezept. Das dauert etwa eine halbe Minute …</p>
+      </div>
+    );
+  }
+
+  const { value, include, saving } = state;
+  const toggle = (index: number) =>
+    setState({ ...state, include: include.map((on, i) => (i === index ? !on : on)) });
+
+  const save = async () => {
+    setState({ ...state, saving: true });
+    try {
+      const result = await api.saveGenerated(recipe.id, {
+        url: value.url,
+        servings: value.servings,
+        minutes: value.minutes,
+        steps: value.steps,
+        ingredients: value.ingredients.map((item, i) => ({
+          line: item.line, zutat: item.zutat, emoji: item.emoji, link: include[i] && item.status !== 'linked',
+        })),
+      });
+      updateRecipe(result.recipe);
+      onSaved(result.not_created);
+    } catch (error) {
+      setState({ kind: 'error', message: messageOf(error) });
+    }
+  };
+
+  let host = 'den Fotos';
+  if (value.url) {
+    try {
+      host = new URL(value.url).hostname.replace(/^www\./, '');
+    } catch {
+      host = value.url;
+    }
+  }
+
+  return (
+    <div class="generiert" aria-live="polite">
+      <p class="meta muted">Vorschau aus {host}, noch nicht gespeichert</p>
+      <div class="abschnitt-kopf">
+        <h3 class="titel-block">Zutaten</h3>
+        {value.servings && <p class="meta muted">{value.servings}</p>}
+      </div>
+      <p class="text-klein muted">Angehakte Zutaten werden mit eurer Zutaten-Datenbank verknüpft und landen damit auf der Einkaufsliste.</p>
+      <ul class="zutaten">
+        {value.ingredients.map((item, index) => (
+          <li key={index} class="zutat generiert-zutat">
+            <label>
+              <input type="checkbox" checked={include[index]} disabled={item.status === 'linked' || saving}
+                onChange={() => toggle(index)} />
+              <span class="zutat-emoji" aria-hidden="true">{item.emoji ?? initialOf(item.name)}</span>
+              <span class="zutat-text">
+                <span class="zutat-name">{item.name}</span>
+                {item.amount && <span class="meta muted">{item.amount}</span>}
+                <span class={`meta generiert-status generiert-${include[index] ? item.status : 'aus'}`}>
+                  {statusText(item, include[index])}
+                </span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <h3 class="titel-block">Zubereitung</h3>
+      {value.steps.length ? (
+        <ol class="schritte">
+          {value.steps.map((step, index) => (
+            <li key={index} class="schritt">
+              <span class="schritt-nummer" aria-hidden="true">{index + 1}</span>
+              <p class="fliesstext">{step}</p>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p class="text-klein muted">Auf der Quelle stehen keine Schritte.</p>
+      )}
+      <div class="knopf-reihe">
+        <button type="button" class="kg-btn kg-btn-primaer" disabled={saving} onClick={save}>
+          {saving ? 'Speichert …' : 'In Notion speichern'}
+        </button>
+        <button type="button" class="kg-btn kg-btn-sekundaer" disabled={saving} onClick={() => setState({ kind: 'idle' })}>
+          Verwerfen
+        </button>
+      </div>
+    </div>
   );
 }
 

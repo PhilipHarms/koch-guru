@@ -47,6 +47,35 @@ export type Suggestions = {
   history_entry: string;
 };
 
+export type GeneratedIngredient = {
+  line: string;
+  amount: string | null;
+  name: string;
+  /** The ingredient in the ingredients database, or the name it would get there. */
+  zutat: string;
+  emoji: string | null;
+  status: 'linked' | 'existing' | 'new';
+  staple: boolean;
+  include: boolean;
+};
+
+export type GeneratedRecipe = {
+  source: string;
+  url: string | null;
+  servings: string | null;
+  minutes: number | null;
+  ingredients: GeneratedIngredient[];
+  steps: string[];
+};
+
+export type GeneratedSave = {
+  url: string | null;
+  servings: string | null;
+  minutes: number | null;
+  ingredients: { line: string; zutat: string; emoji: string | null; link: boolean }[];
+  steps: string[];
+};
+
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
 export type Me = { user: string; name: string };
 
@@ -84,6 +113,13 @@ export const api = {
   content: (id: string) => request<RecipeContent>(`/api/recipes/${encodeURIComponent(id)}/content`),
   suggest: (wish: string, history: ChatTurn[]) =>
     request<Suggestions>('/api/suggest', { method: 'POST', body: JSON.stringify({ wish, history }) }),
+  generate: (id: string) =>
+    request<GeneratedRecipe>(`/api/recipes/${encodeURIComponent(id)}/generate`, { method: 'POST' }),
+  saveGenerated: (id: string, body: GeneratedSave) =>
+    request<{ recipe: Recipe; not_created: string[] }>(`/api/recipes/${encodeURIComponent(id)}/generate/save`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {
