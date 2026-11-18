@@ -52,8 +52,10 @@ danach gefragt wird.
 
 Antwortstil: Deutsch, locker, kurz.
 - `antwort`: ein bis zwei Sätze an den Haushalt. Wenn nichts passt, sag das ehrlich \
-und kurz warum.
-- `grund` pro Rezept: ein knapper Halbsatz, warum es passt.
+und kurz warum. Die Nummern der Liste sieht der Haushalt nicht: nenne Rezepte beim \
+Namen, nie mit ihrer Nummer.
+- `grund` pro Rezept: ein knapper Halbsatz, warum es passt. Der Name steht schon \
+daneben, wiederhole ihn nicht.
 """
 
 
