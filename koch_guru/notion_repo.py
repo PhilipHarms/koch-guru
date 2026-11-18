@@ -159,7 +159,13 @@ def page_to_recipe(
         origin=_list_values(props.get(mapping.origin)) if mapping.origin else (),
         ingredients=ingredients,
         this_week=bool((props.get(mapping.this_week) or {}).get("checkbox")) if mapping.this_week else False,
+        emoji=_page_emoji(page),
     )
+
+
+def _page_emoji(page: dict[str, Any]) -> str | None:
+    icon = page.get("icon") or {}
+    return icon.get("emoji") if icon.get("type") == "emoji" else None
 
 
 class RecipeRepository:

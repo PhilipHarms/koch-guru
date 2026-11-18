@@ -43,3 +43,32 @@ def test_hint_when_old_variable_name_is_used():
 
 def test_model_override():
     assert load_settings({**BASE, "OPENROUTER_MODEL": "anthropic/claude-haiku-5.5"}).model.endswith("haiku-5.5")
+
+
+KEY_A, KEY_B = "a" * 32, "B-_9" * 8
+
+
+def test_app_users_and_port():
+    s = load_settings({**BASE, "APP_USERS": f" Philip:{KEY_A} , charlotte:{KEY_B} ", "PORT": "8080"})
+    assert s.app_users == {KEY_A: "philip", KEY_B: "charlotte"}
+    assert s.port == 8080
+    assert load_settings(BASE).app_users == {} and load_settings(BASE).port == 8000
+
+
+@pytest.mark.parametrize("raw", [
+    "philip",                         # no key
+    f":{KEY_A}",                      # no name
+    "philip:kurz",                    # key too short
+    "philip:" + "ä" * 30,             # not URL-safe
+    f"philip:{KEY_A},charlotte:{KEY_A}",  # same key twice
+    f"philip:{KEY_A},philip:{KEY_B}",     # same name twice
+])
+def test_invalid_app_users(raw):
+    with pytest.raises(ConfigError) as exc:
+        load_settings({**BASE, "APP_USERS": raw})
+    assert KEY_A not in str(exc.value)  # never echo a secret into the logs
+
+
+def test_invalid_port():
+    with pytest.raises(ConfigError):
+        load_settings({**BASE, "PORT": "achtzig"})
