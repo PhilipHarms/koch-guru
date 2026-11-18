@@ -23,6 +23,7 @@ Geplant: Zutaten-Verknüpfung beim Import, „Zuletzt gekocht“ und Zubereitung
 
 ```
 main.py                     Einstiegspunkt (Railway startet `python main.py`): Web-App plus Bot
+Dockerfile                  Build für Railway: Oberfläche bauen, dann Python-Dienst
 koch_guru/
   server.py                 Startet Web-Server und Bot gemeinsam und beendet beide sauber
   core.py                   Gemeinsame Clients: Notion, Rezept-Repository, OpenRouter, HTTP
@@ -45,9 +46,9 @@ tests/                      Tests ohne Netzwerkzugriff
 web/                        Oberfläche: Preact + TypeScript, gebaut mit Vite
   src/styles/tokens.css     Farben, Schrift, Abstände aus dem Design-System KochGuru (nicht von Hand ändern)
   src/styles/components.css Komponenten aus dem Design-System
-  src/pages/                Bildschirme (Rezepte, Platzhalter für Heute, Woche, Einkauf)
+  src/pages/                Bildschirme (Heute, Rezepte, Rezept, Woche, Platzhalter für Einkauf)
   public/                   Manifest, App-Icons, Service Worker
-  dist/                     Gebaute Oberfläche, die der Server ausliefert (eingecheckt, siehe unten)
+  dist/                     Gebaute Oberfläche, die der Server ausliefert (nicht eingecheckt, entsteht beim Build)
 ```
 
 Grundprinzip: Claude liefert nur Nummern aus der Rezeptliste plus Begründung. Der Code prüft die Nummern gegen Notion und baut die Nachricht selbst. Dadurch kann der Bot keine Rezepte erfinden, und die Formatierung bricht nicht.
@@ -118,13 +119,13 @@ npm run dev     # http://localhost:5173, leitet /api und /login an python main.p
 npm run build   # prüft die Typen und baut nach web/dist
 ```
 
-Der Server liefert `web/dist` aus. Solange Railway nur Python baut, wird `web/dist` mit eingecheckt: Nach Änderungen an der Oberfläche `npm run build` ausführen und `web/dist` mit committen. Später übernimmt ein Docker-Build diesen Schritt.
+Der Server liefert `web/dist` aus. Lokal entsteht es mit `npm run build`; eingecheckt wird es nicht, beim Deployment baut das `Dockerfile` die Oberfläche selbst.
 
 Wichtig: Läuft der Bot gleichzeitig auf Railway, verteilt Telegram die Nachrichten zufällig auf beide Instanzen (Fehler „terminated by other getUpdates request“). Lokal daher am besten mit einem zweiten Test-Bot-Token arbeiten.
 
 ## Deployment auf Railway
 
-Railway baut aus `requirements.txt` und startet `python main.py`. Die Python-Version steht in `.python-version`. Benötigte Variablen: `TELEGRAM_TOKEN`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `OPENROUTER_API_KEY`, `ALLOWED_USER_IDS` und für die Web-App `APP_USERS`.
+Railway baut mit dem `Dockerfile` im Hauptordner: erst die Oberfläche mit Node, dann den Python-Dienst (Python 3.12, Pakete aus `requirements.txt`), der `python main.py` startet. Liegt ein `Dockerfile` im Hauptordner, nimmt Railway es automatisch. Benötigte Variablen: `TELEGRAM_TOKEN`, `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `OPENROUTER_API_KEY`, `ALLOWED_USER_IDS` und für die Web-App `APP_USERS`.
 
 Damit die Web-App erreichbar ist, braucht der Dienst eine öffentliche Adresse: in Railway unter Settings › Networking › „Generate Domain“. Railway setzt `PORT` selbst und leitet HTTPS an den Server weiter.
 

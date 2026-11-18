@@ -1,0 +1,14 @@
+# Only what the image needs; the front end is built inside the image.
+.git
+.venv
+venv
+env
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.env
+web/node_modules
+web/dist
+tests
+*.md
