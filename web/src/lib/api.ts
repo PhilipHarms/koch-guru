@@ -62,6 +62,8 @@ export type GeneratedIngredient = {
 export type GeneratedRecipe = {
   source: string;
   url: string | null;
+  /** Recipe photo of the linked page, offered as the Notion cover. */
+  image: string | null;
   servings: string | null;
   minutes: number | null;
   ingredients: GeneratedIngredient[];
@@ -74,6 +76,7 @@ export type GeneratedSave = {
   minutes: number | null;
   ingredients: { line: string; zutat: string; emoji: string | null; link: boolean }[];
   steps: string[];
+  cover: string | null;
 };
 
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };

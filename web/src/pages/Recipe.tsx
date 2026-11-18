@@ -215,7 +215,7 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
 type GenerateState =
   | { kind: 'idle' }
   | { kind: 'reading' }
-  | { kind: 'preview'; value: GeneratedRecipe; include: boolean[]; saving: boolean }
+  | { kind: 'preview'; value: GeneratedRecipe; include: boolean[]; cover: boolean; saving: boolean }
   | { kind: 'error'; message: string };
 
 function statusText(item: GeneratedIngredient, include: boolean): string {
@@ -237,7 +237,9 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
     setState({ kind: 'reading' });
     try {
       const value = await api.generate(recipe.id);
-      setState({ kind: 'preview', value, include: value.ingredients.map((i) => i.include), saving: false });
+      // The photo is offered as cover only when the recipe has none yet.
+      const cover = Boolean(value.image && !recipe.image);
+      setState({ kind: 'preview', value, include: value.ingredients.map((i) => i.include), cover, saving: false });
     } catch (error) {
       setState({ kind: 'error', message: messageOf(error) });
     }
@@ -276,7 +278,8 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
     );
   }
 
-  const { value, include, saving } = state;
+  const { value, include, cover, saving } = state;
+  const offerCover = Boolean(value.image && !recipe.image);
   const toggle = (index: number) =>
     setState({ ...state, include: include.map((on, i) => (i === index ? !on : on)) });
 
@@ -288,6 +291,7 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
         servings: value.servings,
         minutes: value.minutes,
         steps: value.steps,
+        cover: offerCover && cover ? value.image : null,
         ingredients: value.ingredients.map((item, i) => ({
           line: item.line, zutat: item.zutat, emoji: item.emoji, link: include[i] && item.status !== 'linked',
         })),
@@ -311,6 +315,15 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
   return (
     <div class="generiert" aria-live="polite">
       <p class="meta muted">Vorschau aus {host}, noch nicht gespeichert</p>
+      {offerCover && value.image && (
+        <label class="generiert-bild">
+          <img src={value.image} alt="" referrerpolicy="no-referrer" loading="lazy" />
+          <span class="generiert-bild-wahl">
+            <input type="checkbox" checked={cover} disabled={saving} onChange={() => setState({ ...state, cover: !cover })} />
+            <span class="text-klein">Als Titelbild in Notion übernehmen</span>
+          </span>
+        </label>
+      )}
       <div class="abschnitt-kopf">
         <h3 class="titel-block">Zutaten</h3>
         {value.servings && <p class="meta muted">{value.servings}</p>}
