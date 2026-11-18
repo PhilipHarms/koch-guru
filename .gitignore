@@ -21,7 +21,5 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
-# Front end
+# Front end (web/dist is built by the Dockerfile; dist/ above keeps it out of git)
 web/node_modules/
-# Built front end is committed until the Docker build takes over
-!web/dist/
