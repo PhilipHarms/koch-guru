@@ -95,7 +95,7 @@ async def get_recipe_content(recipe_id: str, request: Request) -> dict[str, Any]
     repo = repo_of(request)
     recipe = await find_recipe(repo, recipe_id)
     blocks = await repo.page_blocks(recipe.id)
-    return parse_content(blocks, ingredients=recipe.ingredients, emoji_by_name=repo.ingredient_emojis)
+    return parse_content(blocks, ingredients=recipe.ingredients, icon_by_name=repo.ingredient_icons)
 
 
 @router.get("/recipes/{recipe_id}/image")

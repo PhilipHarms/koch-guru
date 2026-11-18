@@ -1,7 +1,7 @@
 """Turning Notion page content into ingredients, steps and simple blocks for the recipe screen."""
 
 from koch_guru.notion_repo import draft_blocks
-from koch_guru.page_content import EmojiFinder, ingredient_line, parse_content
+from koch_guru.page_content import IconFinder, ingredient_line, parse_content
 from koch_guru.services.importer import RecipeDraft
 
 EMOJIS = {"Süßkartoffel": "🍠", "Tomate": "🍅", "Mehl 405": "🌾", "Eier": "🥚", "Saure Sahne": "🥛",
@@ -52,7 +52,7 @@ def test_bot_page_becomes_info_ingredients_steps_and_photo():
         total_minutes=45, servings="4 Portionen",
     )
     content = parse_content(as_read(draft_blocks(draft, ["upload-1"])),
-                            ingredients=["Süßkartoffel", "Gelbe Linsen", "Kurkuma"], emoji_by_name=EMOJIS)
+                            ingredients=["Süßkartoffel", "Gelbe Linsen", "Kurkuma"], icon_by_name=EMOJIS)
     assert content["minutes"] == 45
     assert content["servings"] == "4 Portionen"
     assert content["ingredients"] == [
@@ -75,7 +75,7 @@ def test_page_without_ingredient_list_shows_linked_ingredients():
         {"type": "bookmark", "bookmark": {"url": "https://example.com/video", "caption": []}},
         block("paragraph", ""),
     ]
-    content = parse_content(blocks, ingredients=["Tomate", "Nudeln"], emoji_by_name=EMOJIS)
+    content = parse_content(blocks, ingredients=["Tomate", "Nudeln"], icon_by_name=EMOJIS)
     assert content["ingredients"] == [
         {"name": "Tomate", "amount": None, "emoji": "🍅"},
         {"name": "Nudeln", "amount": None, "emoji": None},
@@ -101,7 +101,7 @@ def test_headings_in_english_groups_and_nested_items():
         block("heading_2", "Notizen"),
         block("to_do", "Mehr Salz", checked=True),
     ]
-    content = parse_content(blocks, emoji_by_name=EMOJIS)
+    content = parse_content(blocks, icon_by_name=EMOJIS)
     assert content["ingredients"] == [
         {"group": "Für den Teig"},
         {"name": "Mehl", "amount": "500 g", "emoji": "🌾"},
@@ -133,7 +133,7 @@ def test_rich_text_links_and_columns_are_kept():
 
 
 def test_amounts():
-    find = EmojiFinder([], {})
+    find = IconFinder([], {})
     cases = {
         "2 EL Olivenöl": ("2 EL", "Olivenöl"),
         "500g Mehl": ("500g", "Mehl"),
@@ -150,7 +150,7 @@ def test_amounts():
 
 
 def test_emoji_finder():
-    find = EmojiFinder(["Linsen"], EMOJIS)
+    find = IconFinder(["Linsen"], EMOJIS)
     assert find("Kirschtomaten") == "🍅"  # end of a compound
     assert find("Tomatenmark") is None  # Tomatenmark is Mark, not a Tomate
     assert find("Grießbrei") is None  # "Ei" only on its own
@@ -175,7 +175,7 @@ def test_page_without_headings_guesses_ingredients_then_steps():
             "Keep 1-2 handfuls for decoration.",
         ),
     ]
-    content = parse_content(blocks, ingredients=["Pasta"], emoji_by_name={"Pasta": "🍝"})
+    content = parse_content(blocks, ingredients=["Pasta"], icon_by_name={"Pasta": "🍝"})
     assert [i.get("name") or i.get("group") for i in content["ingredients"]] == [
         "Pasta", "Babyspinat", "Knoblauchzehe", "Salt and pepper", "For decoration", "balls of burrata",
     ]
@@ -229,3 +229,17 @@ def test_notes_pages_are_not_mistaken_for_recipes():
     content = parse_content(few_short_lines)
     assert content["ingredients"] == [] and content["steps"] == []
     assert len(content["blocks"]) == 3
+
+
+def test_notion_icons_and_short_forms():
+    icons = {"Eier": "🥚", "Mehl 405": "https://www.notion.so/icons/grain_brown.svg", "Zucker": "🍬"}
+    blocks = [block("heading_2", "Zutaten"),
+              *paragraphs("1 Ei (Größe M, ca. 55 g)", "250 g Mehl", "75 g Puderzucker", "1 Prise Salz",
+                          kind="bulleted_list_item")]
+    content = parse_content(blocks, ingredients=["Eier", "Mehl 405", "Zucker"], icon_by_name=icons)
+    assert content["ingredients"] == [
+        {"name": "Ei (Größe M, ca. 55 g)", "amount": "1", "emoji": "🥚"},
+        {"name": "Mehl", "amount": "250 g", "emoji": None, "icon": "https://www.notion.so/icons/grain_brown.svg"},
+        {"name": "Puderzucker", "amount": "75 g", "emoji": "🍬"},
+        {"name": "Salz", "amount": "1 Prise", "emoji": None},
+    ]

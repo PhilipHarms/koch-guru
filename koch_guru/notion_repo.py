@@ -10,8 +10,10 @@ import asyncio
 import dataclasses
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import quote
 
 from notion_client import APIErrorCode, APIResponseError, AsyncClient
 from notion_client.helpers import async_collect_paginated_api, extract_notion_id
@@ -177,6 +179,23 @@ def _page_emoji(page: dict[str, Any]) -> str | None:
     return icon.get("emoji") if icon.get("type") == "emoji" else None
 
 
+def page_icon(page: dict[str, Any]) -> str | None:
+    """The page icon as an emoji, or as an image address for Notion's own icons and uploads."""
+    icon = page.get("icon") or {}
+    kind = icon.get("type")
+    if kind == "emoji":
+        return icon.get("emoji")
+    if kind == "icon":  # Notion's built-in icons, e.g. https://www.notion.so/icons/pizza_blue.svg
+        data = icon.get("icon") or {}
+        name, color = data.get("name"), data.get("color") or "gray"
+        return f"https://www.notion.so/icons/{quote(name)}_{quote(color)}.svg" if name else None
+    if kind == "custom_emoji":
+        return (icon.get("custom_emoji") or {}).get("url")
+    if kind in ("external", "file"):
+        return (icon.get(kind) or {}).get("url")
+    return None
+
+
 def _page_cover(page: dict[str, Any]) -> str | None:
     cover = page.get("cover") or {}
     kind = cover.get("type")
@@ -201,7 +220,7 @@ class RecipeRepository:
         self._cached_at = 0.0
         self._lock = asyncio.Lock()
         self._ingredient_warning_logged = False
-        self._ingredient_emojis: dict[str, str] = {}
+        self._ingredient_icons: dict[str, str] = {}
         self._content_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     @property
@@ -273,16 +292,21 @@ class RecipeRepository:
                 self._ingredient_warning_logged = True
             return {}
         names = {p["id"]: name for p in pages if (name := _page_title(p))}
-        self._ingredient_emojis = {
-            names[p["id"]]: emoji for p in pages if p["id"] in names and (emoji := _page_emoji(p))
+        self._ingredient_icons = {
+            names[p["id"]]: icon for p in pages if p["id"] in names and (icon := page_icon(p))
         }
-        log.info("%d Zutaten aus Notion geladen.", len(names))
+        kinds = Counter(((p.get("icon") or {}).get("type") or "ohne") for p in pages)
+        log.info(
+            "%d Zutaten aus Notion geladen. Symbole: %s",
+            len(names),
+            ", ".join(f"{count} {kind}" for kind, count in kinds.most_common()),
+        )
         return names
 
     @property
-    def ingredient_emojis(self) -> dict[str, str]:
-        """Ingredient name -> emoji icon from the ingredients database."""
-        return self._ingredient_emojis
+    def ingredient_icons(self) -> dict[str, str]:
+        """Ingredient name -> emoji, or image address of a Notion icon, from the ingredients database."""
+        return self._ingredient_icons
 
     async def page_blocks(self, page_id: str) -> list[dict[str, Any]]:
         """Content of a recipe page, with nested blocks under "children". Cached like the list."""

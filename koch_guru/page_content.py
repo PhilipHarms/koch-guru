@@ -147,21 +147,25 @@ def _mentions(words: list[str], text: str, name: str) -> bool:
         # (Kirschtomaten), but short names like "Ei" only on their own.
         if at >= 0 and len(word) - at - len(name) <= 2 and (at == 0 or len(name) >= 4):
             return True
+        # The line has the shorter form: "Ei" for "Eier", "Zitrone" for "Zitronen".
+        if len(word) >= 2 and name.startswith(word) and len(name) - len(word) <= 2:
+            return True
     return False
 
 
-class EmojiFinder:
-    """Picks the emoji of the ingredient a free-text line talks about."""
+class IconFinder:
+    """Picks the icon of the ingredient a free-text line talks about: an emoji or an image address."""
 
-    def __init__(self, preferred: Iterable[str], emoji_by_name: Mapping[str, str]) -> None:
+    def __init__(self, preferred: Iterable[str], icon_by_name: Mapping[str, str]) -> None:
+        preferred = list(preferred)
         self._candidates: list[tuple[str, str]] = []
         seen = set()
-        for name in [*preferred, *emoji_by_name]:
-            emoji = emoji_by_name.get(name)
+        for name in [*preferred, *icon_by_name]:
+            icon = icon_by_name.get(name)
             key = fold(_clean_name(name))
-            if emoji and key and key not in seen:
+            if icon and key and key not in seen:
                 seen.add(key)
-                self._candidates.append((key, emoji))
+                self._candidates.append((key, icon))
         self._preferred = {fold(_clean_name(n)) for n in preferred}
 
     def __call__(self, line: str) -> str | None:
@@ -174,12 +178,22 @@ class EmojiFinder:
         return hits[0][1]
 
 
-def ingredient_line(line: str, find_emoji: EmojiFinder) -> dict[str, Any]:
+def ingredient_item(name: str, amount: str | None, icon: str | None) -> dict[str, Any]:
+    """An ingredient for the app: emojis go in "emoji", Notion icons and images in "icon"."""
+    item: dict[str, Any] = {"name": name, "amount": amount, "emoji": None}
+    if icon and icon.startswith(("https://", "http://")):
+        item["icon"] = icon
+    else:
+        item["emoji"] = icon
+    return item
+
+
+def ingredient_line(line: str, find_icon: IconFinder) -> dict[str, Any]:
     line = re.sub(r"^[^\w(½¼¾⅓⅔⅛]+", "", line.strip())  # list marks like "-", "•" or "▫️"
     match = AMOUNT.match(line)
     amount, name = (match.group(1).strip(), match.group(2).strip()) if match else (None, line)
     name = re.sub(r"^of\s+", "", name)  # "2 cloves of garlic"
-    return {"name": name, "amount": amount, "emoji": find_emoji(name)}
+    return ingredient_item(name, amount, find_icon(name))
 
 
 def _is_step(line: str) -> bool:
@@ -257,7 +271,7 @@ def parse_content(
     blocks: list[dict[str, Any]],
     *,
     ingredients: Iterable[str] = (),
-    emoji_by_name: Mapping[str, str] | None = None,
+    icon_by_name: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Split a recipe page into info, ingredients, steps and the remaining blocks.
 
@@ -266,11 +280,11 @@ def parse_content(
     ingredients, and the sentences right after them as steps.
 
     `ingredients` are the recipe's linked ingredients; they are shown when the page has
-    no ingredient list of its own and help to pick emojis for free-text lines.
+    no ingredient list of its own and help to pick icons for free-text lines.
     """
     linked = list(ingredients)
-    emoji_by_name = emoji_by_name or {}
-    find_emoji = EmojiFinder(linked, emoji_by_name)
+    icon_by_name = icon_by_name or {}
+    find_icon = IconFinder(linked, icon_by_name)
     markers = [_marker(b) for b in blocks]
     has_ingredient_marker = "ingredients" in markers
     has_step_marker = "steps" in markers
@@ -289,7 +303,7 @@ def parse_content(
             if _is_group(line):
                 items.append({"group": line.rstrip(":").strip()})
             else:
-                items.append(ingredient_line(line, find_emoji))
+                items.append(ingredient_line(line, find_icon))
 
     for index, block in enumerate(blocks):
         kind = block.get("type")
@@ -340,7 +354,7 @@ def parse_content(
         rest.extend(_simple(block))
 
     if not has_ingredient_list:
-        items = [{"name": n, "amount": None, "emoji": emoji_by_name.get(n)} for n in linked]
+        items = [ingredient_item(n, None, icon_by_name.get(n)) for n in linked]
 
     return {
         "minutes": minutes,
