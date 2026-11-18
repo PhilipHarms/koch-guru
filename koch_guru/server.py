@@ -45,6 +45,8 @@ def build_server_app(settings: Settings) -> FastAPI:
 def run() -> None:
     configure_logging()
     settings = load_settings()
+    if settings.app_users_error:
+        log.error("%s. Die Web-App nimmt keine Anmeldungen an, der Bot läuft weiter.", settings.app_users_error)
     app = build_server_app(settings)
     log.info("KochGuru startet: Web-App auf Port %d und Telegram-Bot …", settings.port)
     uvicorn.run(

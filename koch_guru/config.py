@@ -42,6 +42,8 @@ class Settings:
     recipe_cache_seconds: int = 300
     # Web app: personal login key -> user name (e.g. "philip"), from APP_USERS.
     app_users: dict[str, str] = field(default_factory=dict)
+    # Set when APP_USERS is invalid: the web app then accepts no logins, the bot keeps running.
+    app_users_error: str | None = None
     port: int = 8000
 
 
@@ -80,7 +82,7 @@ def _parse_app_users(raw: str) -> dict[str, str]:
             raise ConfigError(
                 f"APP_USERS: Der Schlüssel für {name!r} muss mindestens {MIN_KEY_LENGTH} Zeichen lang sein "
                 "und darf nur Buchstaben, Ziffern, - und _ enthalten "
-                "(neu erzeugen mit: python -m koch_guru.web.keys)"
+                "(z. B. 32 Zeichen nur aus Buchstaben und Ziffern, oder: python -m koch_guru.web.keys)"
             )
         if key in users or name in users.values():
             raise ConfigError(f"APP_USERS: {name!r} oder dessen Schlüssel ist doppelt eingetragen")
@@ -115,6 +117,12 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
     except ValueError as exc:
         raise ConfigError("PORT muss eine ganze Zahl sein") from exc
 
+    # A broken APP_USERS must not take the bot down with it: log it and disable web logins.
+    try:
+        app_users, app_users_error = _parse_app_users(get("APP_USERS")), None
+    except ConfigError as exc:
+        app_users, app_users_error = {}, str(exc)
+
     defaults = PropertyNames()
     return Settings(
         telegram_token=get("TELEGRAM_TOKEN"),
@@ -131,6 +139,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             this_week=get("NOTION_PROP_THIS_WEEK", defaults.this_week),
         ),
         recipe_cache_seconds=cache_seconds,
-        app_users=_parse_app_users(get("APP_USERS")),
+        app_users=app_users,
+        app_users_error=app_users_error,
         port=port,
     )
