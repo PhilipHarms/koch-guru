@@ -6,7 +6,7 @@ import httpx
 from notion_client import AsyncClient
 
 from koch_guru.config import PropertyNames
-from koch_guru.notion_repo import RecipeRepository, draft_blocks, page_to_recipe, resolve_mapping
+from koch_guru.notion_repo import RecipeRepository, draft_blocks, page_icon, page_to_recipe, resolve_mapping
 from koch_guru.services.importer import RecipeDraft
 
 DB_ID = "0123456789abcdef0123456789abcdef"
@@ -366,7 +366,7 @@ def test_cover_is_read_from_external_and_notion_files():
 async def test_ingredient_emojis_come_from_the_ingredient_pages():
     repo = make_repo(FakeNotion(total=1))
     await repo.list_recipes()
-    assert repo.ingredient_emojis == {"Gelbe Linsen": "E1", "Kurkuma": "E2", "Süßkartoffel": "E3"}
+    assert repo.ingredient_icons == {"Gelbe Linsen": "E1", "Kurkuma": "E2", "Süßkartoffel": "E3"}
 
 
 async def test_page_blocks_follow_nested_items_and_are_cached():
@@ -386,3 +386,12 @@ async def test_page_blocks_follow_nested_items_and_are_cached():
     assert "children" not in blocks[1]  # sub-pages are not opened
     await repo.page_blocks("page-1")
     assert fake.block_calls == ["page-1", "b1"]
+
+
+def test_page_icon_kinds():
+    assert page_icon({"icon": {"type": "emoji", "emoji": "🥚"}}) == "🥚"
+    native = {"icon": {"type": "icon", "icon": {"name": "grain", "color": "brown"}}}
+    assert page_icon(native) == "https://www.notion.so/icons/grain_brown.svg"
+    custom = {"icon": {"type": "custom_emoji", "custom_emoji": {"id": "1", "name": "x", "url": "https://s3.example/x.png"}}}
+    assert page_icon(custom) == "https://s3.example/x.png"
+    assert page_icon({"icon": None}) is None

@@ -146,7 +146,9 @@ function Ingredients({ content }: { content: RecipeContent }) {
               <li key={index} class="zutaten-gruppe overline">{item.group}</li>
             ) : (
               <li key={index} class="zutat">
-                <span class="zutat-emoji" aria-hidden="true">{item.emoji ?? '·'}</span>
+                <span class="zutat-emoji" aria-hidden="true">
+                  {item.emoji ?? (item.icon ? <img src={item.icon} alt="" width={24} height={24} loading="lazy" /> : initialOf(item.name))}
+                </span>
                 <span class="zutat-text">
                   <span class="zutat-name">{item.name}</span>
                   {item.amount && <span class="meta muted">{item.amount}</span>}
@@ -158,6 +160,11 @@ function Ingredients({ content }: { content: RecipeContent }) {
       )}
     </section>
   );
+}
+
+/** Without an emoji or icon in Notion, the ingredient's first letter fills the tile. */
+function initialOf(name: string): string {
+  return name.match(/\p{L}/u)?.[0].toLocaleUpperCase('de') ?? '·';
 }
 
 function Steps({ content, link }: { content: RecipeContent; link: string | null }) {

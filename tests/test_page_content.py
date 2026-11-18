@@ -1,7 +1,7 @@
 """Turning Notion page content into ingredients, steps and simple blocks for the recipe screen."""
 
 from koch_guru.notion_repo import draft_blocks
-from koch_guru.page_content import EmojiFinder, ingredient_line, parse_content
+from koch_guru.page_content import IconFinder, ingredient_line, parse_content
 from koch_guru.services.importer import RecipeDraft
 
 EMOJIS = {"Süßkartoffel": "🍠", "Tomate": "🍅", "Mehl 405": "🌾", "Eier": "🥚", "Saure Sahne": "🥛",
@@ -52,7 +52,7 @@ def test_bot_page_becomes_info_ingredients_steps_and_photo():
         total_minutes=45, servings="4 Portionen",
     )
     content = parse_content(as_read(draft_blocks(draft, ["upload-1"])),
-                            ingredients=["Süßkartoffel", "Gelbe Linsen", "Kurkuma"], emoji_by_name=EMOJIS)
+                            ingredients=["Süßkartoffel", "Gelbe Linsen", "Kurkuma"], icon_by_name=EMOJIS)
     assert content["minutes"] == 45
     assert content["servings"] == "4 Portionen"
     assert content["ingredients"] == [
@@ -75,7 +75,7 @@ def test_page_without_ingredient_list_shows_linked_ingredients():
         {"type": "bookmark", "bookmark": {"url": "https://example.com/video", "caption": []}},
         block("paragraph", ""),
     ]
-    content = parse_content(blocks, ingredients=["Tomate", "Nudeln"], emoji_by_name=EMOJIS)
+    content = parse_content(blocks, ingredients=["Tomate", "Nudeln"], icon_by_name=EMOJIS)
     assert content["ingredients"] == [
         {"name": "Tomate", "amount": None, "emoji": "🍅"},
         {"name": "Nudeln", "amount": None, "emoji": None},
@@ -101,7 +101,7 @@ def test_headings_in_english_groups_and_nested_items():
         block("heading_2", "Notizen"),
         block("to_do", "Mehr Salz", checked=True),
     ]
-    content = parse_content(blocks, emoji_by_name=EMOJIS)
+    content = parse_content(blocks, icon_by_name=EMOJIS)
     assert content["ingredients"] == [
         {"group": "Für den Teig"},
         {"name": "Mehl", "amount": "500 g", "emoji": "🌾"},
@@ -133,7 +133,7 @@ def test_rich_text_links_and_columns_are_kept():
 
 
 def test_amounts():
-    find = EmojiFinder([], {})
+    find = IconFinder([], {})
     cases = {
         "2 EL Olivenöl": ("2 EL", "Olivenöl"),
         "500g Mehl": ("500g", "Mehl"),
@@ -150,10 +150,96 @@ def test_amounts():
 
 
 def test_emoji_finder():
-    find = EmojiFinder(["Linsen"], EMOJIS)
+    find = IconFinder(["Linsen"], EMOJIS)
     assert find("Kirschtomaten") == "🍅"  # end of a compound
     assert find("Tomatenmark") is None  # Tomatenmark is Mark, not a Tomate
     assert find("Grießbrei") is None  # "Ei" only on its own
     assert find("Eier") == "🥚"
     assert find("saure Sahne") == "🥛"
     assert find("gelbe Linsen") == "🟤"  # the recipe's own ingredient comes first
+
+
+def paragraphs(*lines, kind="paragraph"):
+    return [block(kind, line) for line in lines]
+
+
+def test_page_without_headings_guesses_ingredients_then_steps():
+    # As many pages in Philip's Notion: bullets, a group line, then sentences.
+    blocks = [
+        *paragraphs("450 g Pasta", "4 Handvoll Babyspinat", "1 Knoblauchzehe", kind="bulleted_list_item"),
+        *paragraphs(
+            "Salt and pepper",
+            "For decoration",
+            "2 balls of burrata",
+            "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water.",
+            "Keep 1-2 handfuls for decoration.",
+        ),
+    ]
+    content = parse_content(blocks, ingredients=["Pasta"], icon_by_name={"Pasta": "🍝"})
+    assert [i.get("name") or i.get("group") for i in content["ingredients"]] == [
+        "Pasta", "Babyspinat", "Knoblauchzehe", "Salt and pepper", "For decoration", "balls of burrata",
+    ]
+    assert content["ingredients"][0] == {"name": "Pasta", "amount": "450 g", "emoji": "🍝"}
+    assert content["steps"] == [
+        {"text": "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water."},
+        {"text": "Keep 1-2 handfuls for decoration."},
+    ]
+    assert content["blocks"] == []
+
+
+def test_marker_lines_numbered_steps_and_servings():
+    blocks = paragraphs(
+        "Serves 2.",
+        "For the tofu:",
+        "▫️300g firm tofu",
+        "▫️1 tbsp cornflour",
+        "▫️2 cloves of garlic, minced",
+        "Instructions:",
+        "1. Tear your block of tofu into nugget sized pieces and bake them for 25 minutes.",
+        "2. Serve with rice.",
+        "ENJOY!",
+    )
+    content = parse_content(blocks)
+    assert content["servings"] == "2"
+    assert content["ingredients"] == [
+        {"group": "For the tofu"},
+        {"name": "firm tofu", "amount": "300g", "emoji": None},
+        {"name": "cornflour", "amount": "1 tbsp", "emoji": None},
+        {"name": "garlic, minced", "amount": "2 cloves", "emoji": None},
+    ]
+    assert content["steps"] == [
+        {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes."},
+        {"text": "Serve with rice."},
+        {"text": "ENJOY!"},
+    ]
+
+
+def test_notes_pages_are_not_mistaken_for_recipes():
+    toggles_first = [
+        block("toggle", "Original try", children=[block("paragraph", "no baking powder")]),
+        *paragraphs("Learnings"),
+        *paragraphs("not too sweet", "not too fudgy", "Bake @ 180", kind="bulleted_list_item"),
+    ]
+    content = parse_content(toggles_first, ingredients=["Zitrone"])
+    assert content["ingredients"] == [{"name": "Zitrone", "amount": None, "emoji": None}]
+    assert content["steps"] == []
+    assert len(content["blocks"]) == 5
+
+    few_short_lines = paragraphs("Apfelessig mit 5% Säure", "Banh-mi is a fresh pickle!", "My fruit jam i can preserve")
+    content = parse_content(few_short_lines)
+    assert content["ingredients"] == [] and content["steps"] == []
+    assert len(content["blocks"]) == 3
+
+
+def test_notion_icons_and_short_forms():
+    icons = {"Eier": "🥚", "Mehl 405": "https://www.notion.so/icons/grain_brown.svg", "Zucker": "🍬"}
+    blocks = [block("heading_2", "Zutaten"),
+              *paragraphs("1 Ei (Größe M, ca. 55 g)", "250 g Mehl", "75 g Puderzucker", "1 Prise Salz",
+                          kind="bulleted_list_item")]
+    content = parse_content(blocks, ingredients=["Eier", "Mehl 405", "Zucker"], icon_by_name=icons)
+    assert content["ingredients"] == [
+        {"name": "Ei (Größe M, ca. 55 g)", "amount": "1", "emoji": "🥚"},
+        {"name": "Mehl", "amount": "250 g", "emoji": None, "icon": "https://www.notion.so/icons/grain_brown.svg"},
+        {"name": "Puderzucker", "amount": "75 g", "emoji": "🍬"},
+        {"name": "Salz", "amount": "1 Prise", "emoji": None},
+    ]

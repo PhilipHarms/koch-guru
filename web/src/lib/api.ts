@@ -27,7 +27,8 @@ export type Block =
   | { type: 'link'; url: string; caption: string }
   | { type: 'divider' };
 
-export type Ingredient = { name: string; amount: string | null; emoji: string | null } | { group: string };
+/** `icon` is an image address (Notion's own icons) when the ingredient has no emoji. */
+export type Ingredient = { name: string; amount: string | null; emoji: string | null; icon?: string } | { group: string };
 export type Step = { text: string } | { group: string };
 
 export type RecipeContent = {

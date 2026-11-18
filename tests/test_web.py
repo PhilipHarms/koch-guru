@@ -43,7 +43,7 @@ class FakeRepo:
         self.recipes = [dataclasses.replace(r, this_week=value) if r.id == page_id else r
                         for r in self.recipes]
 
-    ingredient_emojis = {"Kürbis": "🎃", "Linsen": "🫘"}
+    ingredient_icons = {"Kürbis": "🎃", "Linsen": "🫘"}
 
     async def page_blocks(self, page_id):
         self.content_requests = getattr(self, "content_requests", []) + [page_id]
