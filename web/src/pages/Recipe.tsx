@@ -74,7 +74,9 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
           {ready && (ready.minutes || ready.servings) ? (
             <p class="meta rezept-meta">
               {ready.minutes ? <span><UhrIcon size={18} />{ready.minutes} Min.</span> : null}
-              {ready.servings ? <span><PortionenIcon size={18} />{ready.servings}</span> : null}
+              {ready.servings ? (
+                <span><PortionenIcon size={18} />{/^\d+$/.test(ready.servings) ? `${ready.servings} Portionen` : ready.servings}</span>
+              ) : null}
             </p>
           ) : null}
           {recipe.tags.length > 0 && (

@@ -40,7 +40,12 @@ def build_server_app(settings: Settings) -> FastAPI:
             await core.aclose()
 
     return create_app(
-        repo=core.repo, users=settings.app_users, lifespan=lifespan, static_dir=STATIC_DIR, http=core.http
+        repo=core.repo,
+        users=settings.app_users,
+        lifespan=lifespan,
+        static_dir=STATIC_DIR,
+        http=core.http,
+        llm=core.llm,
     )
 
 

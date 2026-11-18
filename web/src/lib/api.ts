@@ -39,6 +39,14 @@ export type RecipeContent = {
   blocks: Block[];
 };
 
+export type ChatTurn = { role: 'user' | 'assistant'; content: string };
+export type Suggestions = {
+  message: string;
+  suggestions: { recipe: Recipe; reason: string }[];
+  /** The answer as text, to send back as history with a follow-up wish. */
+  history_entry: string;
+};
+
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
 export type Me = { user: string; name: string };
 
@@ -74,6 +82,8 @@ export const api = {
   me: () => request<Me>('/api/me'),
   recipes: () => request<RecipeList>('/api/recipes'),
   content: (id: string) => request<RecipeContent>(`/api/recipes/${encodeURIComponent(id)}/content`),
+  suggest: (wish: string, history: ChatTurn[]) =>
+    request<Suggestions>('/api/suggest', { method: 'POST', body: JSON.stringify({ wish, history }) }),
   clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {

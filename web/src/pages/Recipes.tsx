@@ -15,6 +15,13 @@ const SORT_LABEL: Record<Sort, string> = { neu: 'Neu hinzugefügt', name: 'Name'
 /** Search, filters and scroll position survive a visit to a recipe page and back. */
 const remembered = { query: '', selected: [] as string[], scrollY: 0 };
 
+/** Open the overview with this search, e.g. from the search on Heute. */
+export function searchInRecipes(query: string): void {
+  remembered.query = query;
+  remembered.selected = [];
+  remembered.scrollY = 0;
+}
+
 type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
 
 function buildChips(recipes: Recipe[]): Chip[] {
@@ -57,7 +64,7 @@ function RecipeCard({ recipe }: { recipe: Recipe }) {
   );
 }
 
-function RecipeRow({ recipe }: { recipe: Recipe }) {
+export function RecipeRow({ recipe }: { recipe: Recipe }) {
   return (
     <li>
       <a class="kg-zeile" href={recipePath(recipe)}>
