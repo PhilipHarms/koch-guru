@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import { api, type ChatTurn, type Recipe, type Suggestions } from '../lib/api';
-import { dailyPicks } from '../lib/daily';
+import { dailyPicks, type DailyPick } from '../lib/daily';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
-import { KreuzIcon, SucheIcon, WeiterIcon } from '../components/icons';
+import { KreuzIcon, PlusIcon, SucheIcon, WeiterIcon } from '../components/icons';
 import { RecipeRow, searchInRecipes } from './Recipes';
 
 const SEARCH_PREVIEW = 5;
@@ -17,7 +17,15 @@ const remembered = { query: '', pick: 0, wish: '', history: [] as ChatTurn[], id
 
 export function TodayRoute() {
   const { me, recipes } = useData();
+  // Picked once per visit, so adding a recipe to the week does not reshuffle the screen.
+  const [picks] = useState(() => dailyPicks(recipes, new Date()));
+  const [index, setIndex] = useState(remembered.pick);
+  useEffect(() => {
+    remembered.pick = index;
+  }, [index]);
   useEffect(() => window.scrollTo(0, 0), []);
+  const today = picks.length ? picks[index % picks.length] : null;
+
   return (
     <main class="page heute">
       <header class="page-header heute-kopf">
@@ -25,9 +33,9 @@ export function TodayRoute() {
         <span class="heute-avatar" aria-label={`Angemeldet als ${me.name}`}>{me.name.slice(0, 1).toLocaleUpperCase('de')}</span>
       </header>
       <Search recipes={recipes} />
-      <DailySuggestion recipes={recipes} />
+      {today && <DailySuggestion pick={today} canSwitch={picks.length > 1} onNext={() => setIndex((i) => i + 1)} />}
       <Ideas />
-      <ThisWeek recipes={recipes} />
+      <ThisWeek recipes={recipes} picks={picks} exclude={today?.recipe.id} />
     </main>
   );
 }
@@ -104,15 +112,8 @@ function Tags({ recipe, max }: { recipe: Recipe; max: number }) {
   );
 }
 
-function DailySuggestion({ recipes }: { recipes: Recipe[] }) {
-  const picks = useMemo(() => dailyPicks(recipes, new Date()), [recipes]);
-  const [index, setIndex] = useState(remembered.pick);
-  useEffect(() => {
-    remembered.pick = index;
-  }, [index]);
-  if (!picks.length) return null;
-  const { recipe, reason } = picks[index % picks.length];
-
+function DailySuggestion({ pick, canSwitch, onNext }: { pick: DailyPick; canSwitch: boolean; onNext: () => void }) {
+  const { recipe, reason } = pick;
   return (
     <section class="heute-vorschlag" aria-labelledby="vorschlag-titel">
       <a href={recipePath(recipe)} class="heute-vorschlag-link">
@@ -125,9 +126,9 @@ function DailySuggestion({ recipes }: { recipes: Recipe[] }) {
           <p class="heute-grund">{reason}</p>
         </div>
       </a>
-      {picks.length > 1 && (
+      {canSwitch && (
         <div class="page-pad heute-vorschlag-aktion">
-          <button type="button" class="kg-btn kg-btn-sekundaer" onClick={() => setIndex((i) => i + 1)}>
+          <button type="button" class="kg-btn kg-btn-sekundaer" onClick={onNext}>
             Anderer Vorschlag
           </button>
         </div>
@@ -219,17 +220,52 @@ function Ideas() {
   );
 }
 
-function ThisWeek({ recipes }: { recipes: Recipe[] }) {
+const WEEK_IDEAS = 4;
+
+/** Below this many planned recipes, Heute suggests more for the week. */
+const FEW_PLANNED = 2;
+
+function ThisWeek({ recipes, picks, exclude }: { recipes: Recipe[]; picks: DailyPick[]; exclude?: string }) {
+  const { weekSupported, updateRecipe } = useData();
   const planned = recipes.filter((r) => r.this_week);
+  // Decided when the screen opens, so the ideas do not vanish while you add them.
+  const [suggesting] = useState(() => weekSupported && planned.length < FEW_PLANNED);
+  const [offset, setOffset] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const planNow = (id: string) => recipes.find((r) => r.id === id)?.this_week ?? false;
+  const candidates = picks.filter((p) => p.recipe.id !== exclude && !planNow(p.recipe.id));
+  const shown = candidates.length
+    ? Array.from({ length: Math.min(WEEK_IDEAS, candidates.length) }, (_, i) => candidates[(offset + i) % candidates.length])
+    : [];
+
+  const add = async (recipe: Recipe) => {
+    setBusy(recipe.id);
+    setError(null);
+    try {
+      updateRecipe(await api.setThisWeek(recipe.id, true));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const hint = planned.length === 0
+    ? 'Noch nichts geplant. Wie wär’s damit?'
+    : planned.length === 1
+      ? 'Nur noch ein Rezept geplant. Ideen für die nächsten Abende:'
+      : 'Noch mehr Ideen für die Woche:';
+
   return (
     <section class="heute-woche" aria-labelledby="woche-titel">
       <div class="page-pad abschnitt-kopf">
         <h2 id="woche-titel" class="abschnitt">Diese Woche</h2>
         <a class="rezept-link" href="/woche">Alle anzeigen</a>
       </div>
-      {planned.length === 0 ? (
-        <p class="page-pad text-klein muted">Noch nichts geplant.</p>
-      ) : (
+      {planned.length === 0 && !suggesting && <p class="page-pad text-klein muted">Noch nichts geplant.</p>}
+      {planned.length > 0 && (
         <ul class="heute-woche-reihe">
           {planned.map((recipe) => (
             <li key={recipe.id}>
@@ -240,6 +276,34 @@ function ThisWeek({ recipes }: { recipes: Recipe[] }) {
             </li>
           ))}
         </ul>
+      )}
+      {suggesting && shown.length > 0 && (
+        <div class="page-pad heute-woche-ideen">
+          <p class="text-klein">{hint}</p>
+          <ul class="kg-liste">
+            {shown.map(({ recipe, reason }) => (
+              <li key={recipe.id} class="heute-woche-idee">
+                <a class="kg-zeile" href={recipePath(recipe)}>
+                  <RecipeImage recipe={recipe} size="liste" />
+                  <span class="kg-zeile-text">
+                    <span class="titel-karte">{recipe.name}</span>
+                    <span class="meta heute-ideen-grund">{reason}</span>
+                  </span>
+                </a>
+                <button type="button" class="kg-iconbtn" disabled={busy !== null} onClick={() => add(recipe)}
+                  aria-label={`${recipe.name} auf die Wochenliste`}>
+                  <PlusIcon size={20} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {error && <p class="fehler" role="alert">{error}</p>}
+          {candidates.length > WEEK_IDEAS && (
+            <button type="button" class="rezept-link" onClick={() => setOffset((o) => o + WEEK_IDEAS)}>
+              Andere Ideen
+            </button>
+          )}
+        </div>
       )}
     </section>
   );
