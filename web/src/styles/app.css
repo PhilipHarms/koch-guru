@@ -214,3 +214,8 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .kg-bild-woche-gross { width: 156px; height: 176px; border-radius: 20px; }
 .kg-bild-woche-gross .kg-bild-emoji { font-size: 64px; }
 .heute-vorschlag-karte .kg-tag-neutral { background: var(--surface); }
+.heute-woche-ideen { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-8); }
+.heute-woche-ideen > p { margin: 0; }
+.heute-woche-ideen .kg-liste { width: 100%; }
+.heute-woche-idee { display: flex; align-items: center; gap: var(--space-10); }
+.heute-woche-idee .kg-zeile { flex: 1; min-width: 0; }
