@@ -1,7 +1,7 @@
 """Turning Notion page content into ingredients, steps and simple blocks for the recipe screen."""
 
 from koch_guru.notion_repo import draft_blocks
-from koch_guru.page_content import IconFinder, ingredient_line, parse_content
+from koch_guru.page_content import IconFinder, german_amount, german_temperatures, ingredient_line, parse_content
 from koch_guru.services.importer import RecipeDraft
 
 EMOJIS = {"Süßkartoffel": "🍠", "Tomate": "🍅", "Mehl 405": "🌾", "Eier": "🥚", "Saure Sahne": "🥛",
@@ -204,8 +204,8 @@ def test_marker_lines_numbered_steps_and_servings():
     assert content["ingredients"] == [
         {"group": "For the tofu"},
         {"name": "firm tofu", "amount": "300g", "emoji": None},
-        {"name": "cornflour", "amount": "1 tbsp", "emoji": None},
-        {"name": "garlic, minced", "amount": "2 cloves", "emoji": None},
+        {"name": "cornflour", "amount": "1 EL", "emoji": None},
+        {"name": "garlic, minced", "amount": "2 Zehen", "emoji": None},
     ]
     assert content["steps"] == [
         {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes."},
@@ -260,7 +260,7 @@ def test_clipped_page_with_intro_tips_and_step_labels():
     ]
     content = parse_content(blocks)
     assert content["ingredients"] == [
-        {"name": "Tahini", "amount": "1 Tbsp", "emoji": None},
+        {"name": "Tahini", "amount": "1 EL", "emoji": None},
         {"name": "Pak Choi", "amount": "1", "emoji": None},
         {"name": "mixed green veg, such as courgettes, fennel, tenderstem broccoli, peas.", "amount": "600g",
          "emoji": None},
@@ -269,3 +269,30 @@ def test_clipped_page_with_intro_tips_and_step_labels():
     assert [b["text"][0]["text"][:20] for b in content["blocks"]] == [
         "The easiest meal in ", "That, my friend, is ", "Tags", "Recipes you may like",
     ]
+
+
+def test_english_amounts_in_german():
+    cases = {
+        "2 tbsp": "2 EL", "1 Tbsp": "1 EL", "3 tbsps": "3 EL", "1/2 tsp": "1/2 TL", "1.5 teaspoons": "1,5 TL",
+        "1 cup": "240 ml", "1/2 cup": "120 ml", "1 1/2 cups": "360 ml", "¾ cup": "180 ml", "2-3 cups": "480–720 ml",
+        "8 oz": "230 g", "1 lb": "450 g", "2 cloves": "2 Zehen", "1 clove": "1 Zehe", "1 bunch": "1 Bund",
+        "1 pinch": "1 Prise", "2 tins": "2 Dosen", "ca. 2 tbsp": "ca. 2 EL",
+        "200 g": "200 g", "2 EL": "2 EL", "2 x 400 g": "2 x 400 g", "1": "1",
+        "1 El": "1 EL", "2 Tl.": "2 TL", "200 mL": "200 ml",
+    }
+    for english, german in cases.items():
+        assert german_amount(english) == german, english
+
+
+def test_english_lines_get_german_amounts():
+    find = IconFinder([], {})
+    assert ingredient_line("2 tbsps dark soy sauce", find)["amount"] == "2 EL"
+    assert ingredient_line("1 cup flour", find) == {"name": "flour", "amount": "240 ml", "emoji": None}
+    assert ingredient_line("3 cloves of garlic", find) == {"name": "garlic", "amount": "3 Zehen", "emoji": None}
+
+
+def test_oven_temperatures_in_celsius():
+    assert german_temperatures("Preheat the oven to 400°F.") == "Preheat the oven to 200 °C."
+    assert german_temperatures("Bake at 350 degrees F for 25 minutes") == "Bake at 180 °C for 25 minutes"
+    assert german_temperatures("Bake at 200°C/400°F") == "Bake at 200°C/400°F"
+    assert german_temperatures("Bake 25 minutes") == "Bake 25 minutes"

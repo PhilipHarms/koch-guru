@@ -23,8 +23,9 @@ TEXT_ITEMS = {"paragraph", "bulleted_list_item", "numbered_list_item", "to_do"}
 
 UNITS = (
     r"kg|g|mg|ml|cl|dl|l|el|tl|msp|bund|prisen?|stück|stk|dosen?|becher|zehen?|scheiben?|handvoll"
-    r"|pck|päckchen|packungen?|gläser|glas|tassen?|cups?|tbsp|tsp|oz|lbs?|cm|blätter|blatt|zweige?"
-    r"|pinch|bunch|tins?|cans?|cloves?|handfuls?|sprigs?|stalks?"
+    r"|pck|päckchen|packungen?|gläser|glas|tassen?|cm|blätter|blatt|zweige?"
+    r"|fl\.? oz|cups?|tbsps?|tbs|tablespoons?|tsps?|teaspoons?|oz|ounces?|lbs?|pounds?|pints?"
+    r"|pinch(?:es)?|bunch(?:es)?|tins?|cans?|cloves?|handfuls?|sprigs?|stalks?|slices?"
 )
 AMOUNT = re.compile(
     rf"^((?:ca\.\s*)?[\d½¼¾⅓⅔⅛][\d½¼¾⅓⅔⅛.,/\-–\s]*(?:[x×]\s*\d[\d.,]*\s*)?(?:\s*(?:{UNITS})\b\.?)?)"
@@ -179,6 +180,95 @@ class IconFinder:
         return hits[0][1]
 
 
+# --- English amounts in German --------------------------------------------------------
+
+# Unit words that only need a German name: (singular, plural).
+UNIT_NAMES = {
+    "tbsp": ("EL", "EL"), "tbsps": ("EL", "EL"), "tbs": ("EL", "EL"),
+    "tablespoon": ("EL", "EL"), "tablespoons": ("EL", "EL"),
+    "tsp": ("TL", "TL"), "tsps": ("TL", "TL"), "teaspoon": ("TL", "TL"), "teaspoons": ("TL", "TL"),
+    "clove": ("Zehe", "Zehen"), "cloves": ("Zehe", "Zehen"),
+    "bunch": ("Bund", "Bund"), "bunches": ("Bund", "Bund"),
+    "pinch": ("Prise", "Prisen"), "pinches": ("Prise", "Prisen"),
+    "tin": ("Dose", "Dosen"), "tins": ("Dose", "Dosen"), "can": ("Dose", "Dosen"), "cans": ("Dose", "Dosen"),
+    "handful": ("Handvoll", "Handvoll"), "handfuls": ("Handvoll", "Handvoll"),
+    "sprig": ("Zweig", "Zweige"), "sprigs": ("Zweig", "Zweige"),
+    "stalk": ("Stange", "Stangen"), "stalks": ("Stange", "Stangen"),
+    "slice": ("Scheibe", "Scheiben"), "slices": ("Scheibe", "Scheiben"),
+    # German ones written in different ways: "El", "Tl.", "mL"
+    "el": ("EL", "EL"), "tl": ("TL", "TL"), "ml": ("ml", "ml"),
+}
+# Units converted to metric: factor and German unit.
+UNIT_FACTORS = {
+    "cup": (240, "ml"), "cups": (240, "ml"),
+    "oz": (28.35, "g"), "ounce": (28.35, "g"), "ounces": (28.35, "g"),
+    "lb": (453.6, "g"), "lbs": (453.6, "g"), "pound": (453.6, "g"), "pounds": (453.6, "g"),
+    "fl oz": (29.57, "ml"), "pint": (473, "ml"), "pints": (473, "ml"),
+}
+FRACTIONS = {"½": 0.5, "¼": 0.25, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
+NUMBER = r"(?:\d+(?:[.,]\d+)?(?:\s+\d+/\d+|\s*[½¼¾⅓⅔⅛])?|\d+/\d+|[½¼¾⅓⅔⅛])"
+ENGLISH_AMOUNT = re.compile(
+    rf"^(?P<about>ca\.\s*)?(?P<low>{NUMBER})(?:\s*[-–]\s*(?P<high>{NUMBER}))?\s*(?P<unit>fl\.? oz|[a-z]+)\.?$",
+    re.IGNORECASE,
+)
+FAHRENHEIT = re.compile(r"(\d{3})\s*(?:°\s*F\b|degrees\s+f(?:ahrenheit)?\b|F\b(?=\s*\(|\s*/|\s*or\b))", re.IGNORECASE)
+
+
+def _number(text: str) -> float:
+    text = text.strip().replace(",", ".")
+    total = 0.0
+    for part in re.findall(r"\d+/\d+|\d+(?:\.\d+)?|[½¼¾⅓⅔⅛]", text):
+        if part in FRACTIONS:
+            total += FRACTIONS[part]
+        elif "/" in part:
+            top, bottom = part.split("/")
+            total += int(top) / int(bottom) if int(bottom) else 0
+        else:
+            total += float(part)
+    return total
+
+
+def _german_number(text: str) -> str:
+    return text.strip().replace(".", ",")
+
+
+def _rounded(value: float) -> str:
+    step = 5 if value < 100 else 10
+    return str(max(step, int(round(value / step) * step))) if value >= 2.5 else f"{value:.1f}".replace(".", ",")
+
+
+def german_amount(amount: str) -> str:
+    """ "2 tbsp" -> "2 EL", "1/2 cup" -> "120 ml", "8 oz" -> "230 g". Other amounts stay as they are."""
+    match = ENGLISH_AMOUNT.match(amount.strip())
+    if not match:
+        return amount
+    unit = re.sub(r"\s+", " ", match.group("unit").lower().replace(".", ""))
+    low, high = match.group("low"), match.group("high")
+    about = "ca. " if match.group("about") else ""
+    if unit in UNIT_NAMES:
+        singular, plural = UNIT_NAMES[unit]
+        many = _number(high or low) > 1
+        numbers = _german_number(low) + (f"–{_german_number(high)}" if high else "")
+        return f"{about}{numbers} {plural if many else singular}"
+    if unit in UNIT_FACTORS:
+        factor, metric = UNIT_FACTORS[unit]
+        numbers = _rounded(_number(low) * factor) + (f"–{_rounded(_number(high) * factor)}" if high else "")
+        return f"{about}{numbers} {metric}"
+    return amount
+
+
+def german_temperatures(text: str) -> str:
+    """ "Preheat the oven to 400°F" -> "Preheat the oven to 200 °C"."""
+    if re.search(r"\d\s*°\s*C\b", text):  # "200°C/400°F" already has it in Celsius
+        return text
+
+    def celsius(match: re.Match[str]) -> str:
+        value = (int(match.group(1)) - 32) * 5 / 9
+        return f"{int(round(value / 10) * 10)} °C"
+
+    return FAHRENHEIT.sub(celsius, text)
+
+
 def ingredient_item(name: str, amount: str | None, icon: str | None) -> dict[str, Any]:
     """An ingredient for the app: emojis go in "emoji", Notion icons and images in "icon"."""
     item: dict[str, Any] = {"name": name, "amount": amount, "emoji": None}
@@ -194,7 +284,7 @@ def ingredient_line(line: str, find_icon: IconFinder) -> dict[str, Any]:
     match = AMOUNT.match(line)
     amount, name = (match.group(1).strip(), match.group(2).strip()) if match else (None, line)
     name = re.sub(r"^of\s+", "", name)  # "2 cloves of garlic"
-    return ingredient_item(name, amount, find_icon(name))
+    return ingredient_item(name, german_amount(amount) if amount else None, find_icon(name))
 
 
 def _is_step(line: str) -> bool:
@@ -212,7 +302,7 @@ def _is_group(line: str) -> bool:
 
 
 def _step_text(line: str) -> str:
-    return NUMBERING.sub("", line, count=1).strip()
+    return german_temperatures(NUMBERING.sub("", line, count=1).strip())
 
 
 def _lines(block: dict[str, Any]) -> list[str]:
