@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
-from koch_guru.page_content import parse_content
+from koch_guru.page_content import image_urls, notes_text, parse_content
+from koch_guru.services.generate import generate
+from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import recommend
 from koch_guru.web.auth import current_user, display_name
 
@@ -160,6 +162,74 @@ async def suggest(wish: Wish, request: Request) -> dict[str, Any]:
         "suggestions": [{"recipe": recipe_json(s.recipe), "reason": s.reason} for s in result.suggestions],
         "history_entry": result.as_history(),
     }
+
+
+def llm_of(request: Request) -> Any:
+    llm = request.app.state.llm
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="KochGuru ist gerade nicht erreichbar")
+    return llm
+
+
+@router.post("/recipes/{recipe_id}/generate")
+async def generate_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
+    """Read ingredients and steps from the recipe's link, or its notes and photos. Writes nothing yet."""
+    llm = llm_of(request)
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    link = recipe.url if recipe.url and recipe.url.startswith(("https://", "http://")) else None
+    blocks = await repo.page_blocks(recipe.id)
+    try:
+        result = await generate(
+            link=link,
+            notes=notes_text(blocks),
+            photo_urls=image_urls(blocks),
+            http=request.app.state.http,
+            llm=llm,
+            known=repo.ingredient_names,
+            linked=list(recipe.ingredients),
+        )
+    except RecipeImportError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except Exception as exc:  # the model or a site failed in an unexpected way
+        log.warning("Rezept generieren fehlgeschlagen: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="Das hat nicht geklappt. Versuch es gleich noch einmal."
+        ) from exc
+    return result.as_json()
+
+
+class GeneratedLine(BaseModel):
+    line: str = Field(min_length=1, max_length=300)
+    zutat: str = Field(default="", max_length=100)
+    emoji: str | None = Field(default=None, max_length=16)
+    link: bool = False
+
+
+class GeneratedSave(BaseModel):
+    url: str | None = Field(default=None, max_length=2000)
+    servings: str | None = Field(default=None, max_length=100)
+    minutes: int | None = Field(default=None, ge=0, le=10_000)
+    ingredients: list[GeneratedLine] = Field(max_length=80)
+    steps: list[str] = Field(max_length=60)
+
+
+@router.post("/recipes/{recipe_id}/generate/save")
+async def save_generated_recipe(recipe_id: str, body: GeneratedSave, request: Request) -> dict[str, Any]:
+    """Write the reviewed preview to the Notion page and link the chosen ingredients."""
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    draft = RecipeDraft(
+        name=recipe.name,
+        url=body.url if body.url and body.url.startswith(("https://", "http://")) else "",
+        ingredients=[i.line.strip() for i in body.ingredients if i.line.strip()],
+        steps=[s.strip()[:2000] for s in body.steps if s.strip()],
+        servings=(body.servings or "").strip() or None,
+        total_minutes=body.minutes or None,
+    )
+    links = [(i.zutat.strip(), i.emoji) for i in body.ingredients if i.link and i.zutat.strip()]
+    not_created = await repo.save_generated(recipe.id, draft=draft, link=links)
+    return {"recipe": recipe_json(await find_recipe(repo, recipe.id)), "not_created": not_created}
 
 
 class RecipeUpdate(BaseModel):

@@ -1,7 +1,14 @@
 """Turning Notion page content into ingredients, steps and simple blocks for the recipe screen."""
 
 from koch_guru.notion_repo import draft_blocks
-from koch_guru.page_content import IconFinder, german_amount, german_temperatures, ingredient_line, parse_content
+from koch_guru.page_content import (
+    IconFinder,
+    german_amount,
+    german_temperatures,
+    ingredient_line,
+    notes_text,
+    parse_content,
+)
 from koch_guru.services.importer import RecipeDraft
 
 EMOJIS = {"Süßkartoffel": "🍠", "Tomate": "🍅", "Mehl 405": "🌾", "Eier": "🥚", "Saure Sahne": "🥛",
@@ -312,3 +319,14 @@ def test_numbered_list_of_sentences_is_the_method():
     assert [s["text"][:16] for s in content["steps"]] == ["Teig: 125 ml Mil", "Gemüse anbraten:", "Backen."]
     assert [b["type"] for b in content["blocks"]] == ["image", "paragraph", "number"]
     assert content["ingredients"] == [{"name": "Petersilie", "amount": None, "emoji": None}]
+
+
+def test_notes_text_keeps_lists_and_nesting():
+    blocks = [
+        block("heading_2", "Teig"),
+        block("numbered_list_item", "Mehl und Hefe mischen.", children=[block("bulleted_list_item", "500 g Mehl")]),
+        block("numbered_list_item", "Gehen lassen."),
+        block("paragraph", ""),
+        block("to_do", "Mehr Salz"),
+    ]
+    assert notes_text(blocks) == "Teig\n1. Mehl und Hefe mischen.\n  - 500 g Mehl\n2. Gehen lassen.\n- Mehr Salz"

@@ -91,6 +91,8 @@ Jede Person hat einen eigenen Anmeldelink `https://<adresse>/login/<schlüssel>`
 | `GET /api/recipes/{id}/image` | Titelbild der Notion-Seite, über den Server gereicht, damit das Handy es zwischenspeichern kann |
 | `PATCH /api/recipes/{id}` | `{"this_week": true}` setzt oder entfernt das Rezept auf der Wochenliste |
 | `POST /api/week/clear` | Wochenliste leeren |
+| `POST /api/recipes/{id}/generate` | Zutaten und Schritte aus dem Link lesen, sonst aus den Notizen und Fotos der Seite, auf Deutsch, mit passender Zutat aus der Zutaten-Datenbank; schreibt noch nichts |
+| `POST /api/recipes/{id}/generate/save` | Die geprüfte Vorschau an die Notion-Seite anhängen und die gewählten Zutaten verknüpfen (fehlende werden angelegt) |
 | `POST /api/suggest` | `{"wish": "…", "history": […]}`: Rezeptideen von Claude aus der eigenen Sammlung, wie im Bot |
 | `GET /healthz` | Lebenszeichen ohne Anmeldung |
 

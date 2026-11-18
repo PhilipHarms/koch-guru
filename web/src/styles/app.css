@@ -219,3 +219,17 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .heute-woche-ideen .kg-liste { width: 100%; }
 .heute-woche-idee { display: flex; align-items: center; gap: var(--space-10); }
 .heute-woche-idee .kg-zeile { flex: 1; min-width: 0; }
+
+/* Rezept generieren */
+.generiert {
+  display: flex; flex-direction: column; gap: var(--space-12); padding: var(--space-20);
+  border: 1.5px solid var(--brand-line); border-radius: var(--radius-card); background: var(--surface);
+}
+.generiert h3, .generiert p { margin: 0; }
+.generiert-zutat label { flex: 1; display: flex; align-items: center; gap: var(--space-12); cursor: pointer; }
+.generiert-zutat input { flex-shrink: 0; width: 22px; height: 22px; margin: 0; accent-color: var(--brand); }
+.generiert-status { font-size: 13px; }
+.generiert-existing, .generiert-linked { color: var(--success); }
+.generiert-new { color: var(--brand-text); }
+.generiert-aus { color: var(--ink-muted); }
+.hinweis { margin: 0; padding: var(--space-12) var(--space-16); border-radius: var(--radius-field); background: var(--surface-cream); }
