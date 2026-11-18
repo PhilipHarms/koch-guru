@@ -132,6 +132,25 @@ def _simple(block: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def notes_text(blocks: Iterable[dict[str, Any]], limit: int = 20_000) -> str:
+    """The text of a page as plain lines, e.g. to read a recipe from someone's notes."""
+    lines: list[str] = []
+
+    def walk(items: Iterable[dict[str, Any]], depth: int) -> None:
+        number = 0
+        for block in items:
+            kind = block.get("type", "")
+            text = _plain(block)
+            number = number + 1 if kind == "numbered_list_item" else 0
+            prefix = {"bulleted_list_item": "- ", "numbered_list_item": f"{number}. ", "to_do": "- "}.get(kind, "")
+            if text:
+                lines.append("  " * depth + prefix + text)
+            walk(block.get("children") or [], depth + 1)
+
+    walk(blocks, 0)
+    return "\n".join(lines)[:limit]
+
+
 def image_urls(blocks: Iterable[dict[str, Any]]) -> list[str]:
     """Addresses of all photos on a page, nested ones included, in page order."""
     urls: list[str] = []

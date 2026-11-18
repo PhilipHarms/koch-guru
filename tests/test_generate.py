@@ -7,7 +7,6 @@ import pytest
 
 from koch_guru.services.generate import PreparedIngredient, PreparedRecipe, generate, prepare
 from koch_guru.services.importer import ExtractedRecipe, RecipeDraft, RecipeImportError
-from koch_guru.services.importer import PhotoRecipe
 
 KNOWN = ["Sojasauce", "Zwiebel", "Eier", "Salz", "Mehl 405"]
 
@@ -21,8 +20,8 @@ def prepared(*items, steps=("Tofu backen.",), portionen="2 Portionen"):
 
 
 class FakeLLM:
-    def __init__(self, result, extracted=None, photo=None):
-        self.result, self.extracted, self.photo = result, extracted, photo
+    def __init__(self, result, extracted=None):
+        self.result, self.extracted = result, extracted
         self.calls = []
 
     async def structured(self, *, system, messages, output_type):
@@ -31,8 +30,6 @@ class FakeLLM:
             return self.result
         if output_type is ExtractedRecipe:
             return self.extracted
-        if output_type is PhotoRecipe:
-            return self.photo
         raise AssertionError(output_type)
 
 
@@ -79,29 +76,50 @@ async def test_generate_from_link_with_jsonld_needs_one_model_call():
     http = http_with({"https://example.com/tofu": (200, JSONLD_PAGE, "text/html")})
     llm = FakeLLM(prepared(("300 g fester Tofu", "Tofu", "🧈", False), ("2 EL Sojasauce", "Sojasauce", "🥢", False),
                            steps=("Tofu backen.", "Soße dazugeben.")))
-    result = await generate(link="https://example.com/tofu", photo_urls=[], http=http, llm=llm, known=KNOWN, linked=[])
+    result = await generate(link="https://example.com/tofu", notes="", photo_urls=[], http=http, llm=llm,
+                            known=KNOWN, linked=[])
     assert llm.calls == [PreparedRecipe]
     assert [i.line for i in result.ingredients] == ["300 g fester Tofu", "2 EL Sojasauce"]
     assert result.steps == ["Tofu backen.", "Soße dazugeben."]
 
 
+NOTES = "Teig: 500 g Mehl, 1 Päckchen Hefe und 300 ml Wasser verkneten, eine Stunde gehen lassen. Dann backen."
+
+
+def extracted(name="Fladenbrot", zutaten=("500 g Mehl",)):
+    return ExtractedRecipe(ist_rezept=True, name=name, zutaten=list(zutaten), schritte=["Backen."],
+                           portionen="", minuten=0, tags=[], emoji="🍞")
+
+
 async def test_generate_from_photos_on_the_page():
     http = http_with({"https://files.example/a.jpg": (200, b"jpeg", "image/jpeg"),
                       "https://files.example/b.txt": (200, b"text", "text/plain")})
-    photo = PhotoRecipe(ist_rezept=True, name="Oma's Kuchen", zutaten=["200 g Mehl"], schritte=["Backen."],
-                        portionen="", minuten=0, tags=[], emoji="🍰", quelle="")
-    llm = FakeLLM(prepared(("200 g Mehl", "Mehl", "🌾", False)), photo=photo)
-    result = await generate(link=None, photo_urls=["https://files.example/a.jpg", "https://files.example/b.txt"],
+    llm = FakeLLM(prepared(("200 g Mehl", "Mehl", "🌾", False)), extracted=extracted())
+    result = await generate(link=None, notes="", photo_urls=["https://files.example/a.jpg", "https://files.example/b.txt"],
                             http=http, llm=llm, known=KNOWN, linked=[])
-    assert llm.calls == [PhotoRecipe, PreparedRecipe]
-    assert result.source == "Foto" and result.url is None
+    assert llm.calls == [ExtractedRecipe, PreparedRecipe]
+    assert result.source == "Notizen" and result.url is None
     assert result.ingredients[0].existing == "Mehl 405"
+
+
+async def test_link_without_recipe_falls_back_to_the_notes():
+    short = http_with({"https://instagram.example/p/1": (200, "<html><body>Login</body></html>", "text/html")})
+    llm = FakeLLM(prepared(("500 g Mehl", "Mehl", "🌾", False)), extracted=extracted())
+    result = await generate(link="https://instagram.example/p/1", notes=NOTES, photo_urls=[], http=short, llm=llm,
+                            known=KNOWN, linked=[])
+    assert llm.calls == [ExtractedRecipe, PreparedRecipe]
+    assert result.source == "Notizen"
 
 
 async def test_generate_without_source_or_readable_page():
     llm = FakeLLM(prepared())
-    with pytest.raises(RecipeImportError):
-        await generate(link=None, photo_urls=[], http=http_with({}), llm=llm, known=[], linked=[])
+    with pytest.raises(RecipeImportError, match="weder einen Link"):
+        await generate(link=None, notes="kurz", photo_urls=[], http=http_with({}), llm=llm, known=[], linked=[])
     short = http_with({"https://instagram.example/p/1": (200, "<html><body>Login</body></html>", "text/html")})
     with pytest.raises(RecipeImportError, match="kaum Text"):
-        await generate(link="https://instagram.example/p/1", photo_urls=[], http=short, llm=llm, known=[], linked=[])
+        await generate(link="https://instagram.example/p/1", notes="", photo_urls=[], http=short, llm=llm,
+                       known=[], linked=[])
+    no_recipe = FakeLLM(prepared(), extracted=ExtractedRecipe(ist_rezept=False, name="", zutaten=[], schritte=[],
+                                                              portionen="", minuten=0, tags=[], emoji=""))
+    with pytest.raises(RecipeImportError, match="kein Rezept"):
+        await generate(link=None, notes=NOTES, photo_urls=[], http=http_with({}), llm=no_recipe, known=[], linked=[])

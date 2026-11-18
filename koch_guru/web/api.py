@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
-from koch_guru.page_content import image_urls, parse_content
+from koch_guru.page_content import image_urls, notes_text, parse_content
 from koch_guru.services.generate import generate
 from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import recommend
@@ -173,21 +173,22 @@ def llm_of(request: Request) -> Any:
 
 @router.post("/recipes/{recipe_id}/generate")
 async def generate_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
-    """Read ingredients and steps from the recipe's link or its photos. Writes nothing yet."""
+    """Read ingredients and steps from the recipe's link, or its notes and photos. Writes nothing yet."""
     llm = llm_of(request)
     repo = repo_of(request)
     recipe = await find_recipe(repo, recipe_id)
     link = recipe.url if recipe.url and recipe.url.startswith(("https://", "http://")) else None
-    photos = image_urls(await repo.page_blocks(recipe.id))
-    common = {"http": request.app.state.http, "llm": llm, "known": repo.ingredient_names,
-              "linked": list(recipe.ingredients)}
+    blocks = await repo.page_blocks(recipe.id)
     try:
-        try:
-            result = await generate(link=link, photo_urls=[] if link else photos, **common)
-        except RecipeImportError:
-            if not (link and photos):
-                raise
-            result = await generate(link=None, photo_urls=photos, **common)  # e.g. Instagram link, photo on the page
+        result = await generate(
+            link=link,
+            notes=notes_text(blocks),
+            photo_urls=image_urls(blocks),
+            http=request.app.state.http,
+            llm=llm,
+            known=repo.ingredient_names,
+            linked=list(recipe.ingredients),
+        )
     except RecipeImportError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except Exception as exc:  # the model or a site failed in an unexpected way

@@ -1,7 +1,8 @@
-"""Fill a recipe page that has only a link or a photo.
+"""Fill a recipe page that has only a link, notes or a photo.
 
-The recipe is read like an import in the bot: from the page's JSON-LD, from the page text
-or from the photos on the Notion page. A second model call then writes the ingredient
+The recipe is read like an import in the bot: from the linked page's JSON-LD or text. If
+there is no link, or it holds no recipe (Instagram, YouTube), the notes and photos on the
+Notion page are read instead. A second model call then writes the ingredient
 lines and steps in German and names the plain ingredient behind every line, so it can be
 linked to the ingredients database. Nothing is written to Notion here; the app shows a
 preview first, and saving is a separate step.
@@ -20,6 +21,8 @@ from koch_guru.page_content import AMOUNT, best_match, fold, german_amount
 from koch_guru.services.importer import (
     MAX_PHOTOS,
     PHOTO_TYPES,
+    TAG_RULES,
+    ExtractedRecipe,
     Photo,
     RecipeDraft,
     RecipeImportError,
@@ -29,12 +32,21 @@ from koch_guru.services.importer import (
     extract_with_llm,
     fetch_page,
     find_jsonld_recipe,
-    import_from_photos,
+    photo_content,
 )
 
 log = logging.getLogger(__name__)
 
 MAX_PHOTO_BYTES = 8_000_000
+MIN_NOTES = 80  # characters of notes worth reading at all
+
+NOTES_PROMPT = (
+    "Du liest ein Rezept aus den Notizen einer Notion-Seite und, falls dabei, aus Fotos davon "
+    "(Kochbuchseiten, Screenshots, handschriftliche Rezepte). Übernimm Name, Zutaten mit Mengen und "
+    "die Schritte so, wie sie dort stehen, ohne etwas zu erfinden oder zu übersetzen. Stehen die Zutaten "
+    "nur im Text der Schritte, liste sie mit ihren Mengen als Zutaten auf. Unleserliche Stellen markierst "
+    "du mit [?]. Ist kein Rezept zu erkennen, setz ist_rezept auf false. "
+)
 
 PREPARE_PROMPT = """\
 Du bereitest ein Rezept für die private Rezeptsammlung eines deutschen Haushalts auf.
@@ -126,6 +138,28 @@ async def read_from_link(url: str, http: httpx.AsyncClient, llm: StructuredLLM) 
     return await extract_with_llm(final_url, page_html, [], llm)
 
 
+async def read_from_notes(notes: str, photos: list[Photo], llm: StructuredLLM) -> RecipeDraft:
+    """The recipe from the notes on the Notion page and the photos there."""
+    content = photo_content(photos, "") if photos else [{"type": "text", "text": ""}]
+    content[0] = {"type": "text", "text": f"Lies das Rezept aus diesen Notizen{' und Fotos' if photos else ''}.\n\n"
+                  f"<notizen>\n{notes.strip()}\n</notizen>"}
+    result = await llm.structured(
+        system=NOTES_PROMPT + TAG_RULES.format(options=""),
+        messages=[{"role": "user", "content": content}],
+        output_type=ExtractedRecipe,
+    )
+    if not result.ist_rezept or not result.zutaten:
+        raise RecipeImportError("In den Notizen und Fotos habe ich kein Rezept gefunden.")
+    return RecipeDraft(
+        name=result.name.strip(),
+        ingredients=[i.strip() for i in result.zutaten if i.strip()],
+        steps=[s.strip() for s in result.schritte if s.strip()],
+        servings=result.portionen.strip() or None,
+        total_minutes=result.minuten or None,
+        source="notes",
+    )
+
+
 async def download_photos(urls: list[str], http: httpx.AsyncClient) -> list[Photo]:
     photos: list[Photo] = []
     for url in urls[:MAX_PHOTOS]:
@@ -186,22 +220,33 @@ async def prepare(
 async def generate(
     *,
     link: str | None,
+    notes: str,
     photo_urls: list[str],
     http: httpx.AsyncClient,
     llm: StructuredLLM,
     known: list[str],
     linked: list[str],
 ) -> GeneratedRecipe:
-    """Read the recipe from its link, or else from the photos on the Notion page."""
+    """Read the recipe from its link; if that gives nothing, from the notes and photos on the page."""
+    draft: RecipeDraft | None = None
+    problem: RecipeImportError | None = None
     if link:
-        draft = await read_from_link(link, http, llm)
-    elif photo_urls:
-        photos = await download_photos(photo_urls, http)
-        if not photos:
-            raise RecipeImportError("Die Fotos auf der Notion-Seite konnte ich nicht laden.")
-        draft = await import_from_photos(photos, "", llm, [], [])
-    else:
-        raise RecipeImportError("Das Rezept hat weder einen Link noch ein Foto, aus dem ich lesen könnte.")
+        try:
+            draft = await read_from_link(link, http, llm)
+        except RecipeImportError as exc:
+            problem = exc
+            log.info("Link ohne Rezept (%s), versuche Notizen und Fotos.", exc)
+    if draft is None:
+        photos = await download_photos(photo_urls, http) if photo_urls else []
+        if len(notes.strip()) >= MIN_NOTES or photos:
+            draft = await read_from_notes(notes, photos, llm)
+    if draft is None:
+        raise problem or RecipeImportError(
+            "Das Rezept hat weder einen Link noch Notizen oder Fotos, aus denen ich lesen könnte."
+        )
     if not draft.ingredients:
         raise RecipeImportError("Im Rezept habe ich keine Zutaten gefunden.")
-    return await prepare(draft, llm, known, linked)
+    result = await prepare(draft, llm, known, linked)
+    if draft.source in ("notes",):
+        result.source, result.url = "Notizen", None
+    return result

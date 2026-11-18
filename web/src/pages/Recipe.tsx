@@ -185,12 +185,13 @@ type StepsProps = { recipe: Recipe; content: RecipeContent; link: string | null;
 
 function Steps({ recipe, content, link, onGenerated }: StepsProps) {
   let number = 0;
-  const hasPhotos = content.blocks.some((b) => b.type === 'image');
+  // Notes or photos on the Notion page are a source too, e.g. when the link is Instagram.
+  const hasNotes = content.blocks.length > 0;
   return (
     <section class="rezept-abschnitt" aria-labelledby="zubereitung-titel">
       <h2 id="zubereitung-titel" class="abschnitt">Zubereitung</h2>
       {content.steps.length === 0 ? (
-        <Generate recipe={recipe} link={link} canGenerate={Boolean(link) || hasPhotos} onSaved={onGenerated} />
+        <Generate recipe={recipe} link={link} canGenerate={Boolean(link) || hasNotes} onSaved={onGenerated} />
       ) : (
         <ol class="schritte">
           {content.steps.map((step, index) => {
@@ -248,7 +249,7 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
         <p class="text-klein">In Notion stehen noch keine Schritte.</p>
         {canGenerate && (
           <p class="text-klein muted">
-            KochGuru kann Zutaten und Schritte {link ? 'aus dem Originalrezept' : 'von den Fotos'} holen, auf Deutsch.
+            KochGuru kann Zutaten und Schritte {link ? 'aus dem Originalrezept' : 'aus den Notizen und Fotos in Notion'} holen, auf Deutsch.
             Du siehst sie vorher, gespeichert wird erst auf deinen Wunsch.
           </p>
         )}
@@ -298,7 +299,7 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
     }
   };
 
-  let host = 'den Fotos';
+  let host = 'der Notion-Seite';
   if (value.url) {
     try {
       host = new URL(value.url).hostname.replace(/^www\./, '');
