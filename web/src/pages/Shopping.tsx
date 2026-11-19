@@ -1,24 +1,25 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, type Recipe, type ShoppingItem, type ShoppingList } from '../lib/api';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sameId } from '../lib/recipe';
 import { load as loadChoice, save as saveChoice } from '../lib/storage';
 import { RecipeImage } from '../components/RecipeImage';
-import { PlusIcon } from '../components/icons';
+import { AufklappenIcon, PlusIcon } from '../components/icons';
 
-const FILTERS = ['alle', 'fehlend', 'lager'] as const;
-type Filter = (typeof FILTERS)[number];
-const FILTER_LABEL: Record<Filter, string> = { alle: 'Alle', fehlend: 'Fehlend', lager: 'Auf Lager' };
 const VIEWS = ['rezept', 'abteilung'] as const;
 type View = (typeof VIEWS)[number];
-const VIEW_LABEL: Record<View, string> = { rezept: 'Nach Rezept', abteilung: 'Nach Abteilung' };
+const VIEW_LABEL: Record<View, string> = { rezept: 'Rezept', abteilung: 'Abteilung' };
 const NO_AISLE = 'Ohne Abteilung';
+/** A ticked line stays where it is this long, so a wrong tap can be undone, then moves. */
+const MOVE_DELAY_MS = 1200;
+
+type Where = 'offen' | 'da';
 
 /** One line per ingredient, with the amounts and recipes of all its lines. */
 type AisleItem = ShoppingItem & { amounts: string[]; recipes: string[] };
 
-function byAisle(list: ShoppingList, planned: Recipe[]): { aisle: string; items: AisleItem[] }[] {
+function mergedItems(list: ShoppingList, planned: Recipe[]): AisleItem[] {
   const merged = new Map<string, AisleItem>();
   for (const group of list.groups) {
     const recipe = planned.find((r) => sameId(r.id, group.recipe_id));
@@ -30,9 +31,12 @@ function byAisle(list: ShoppingList, planned: Recipe[]): { aisle: string; items:
     }
   }
   for (const item of list.extras) if (!merged.has(item.id)) merged.set(item.id, { ...item, amounts: [], recipes: [] });
+  return [...merged.values()];
+}
 
+function byAisle(list: ShoppingList, items: AisleItem[]): { aisle: string; items: AisleItem[] }[] {
   const aisles = new Map<string, AisleItem[]>();
-  for (const item of merged.values()) {
+  for (const item of items) {
     const key = item.aisle ?? NO_AISLE;
     aisles.set(key, [...(aisles.get(key) ?? []), item]);
   }
@@ -67,23 +71,34 @@ export function ShoppingRoute() {
   const plannedKey = planned.map((r) => r.id).join(',');
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [hint, setHint] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>(() => loadChoice('einkauf-filter', FILTERS, 'fehlend'));
   const [view, setView] = useState<View>(() => loadChoice('einkauf-ansicht', VIEWS, 'rezept'));
-  // Lines ticked or unticked here stay in view until the filter changes, so a wrong tap can be undone.
-  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const [showDone, setShowDone] = useState(false);
+  // Lines just ticked or unticked keep their place for a moment.
+  const [pinned, setPinned] = useState<ReadonlyMap<string, Where>>(new Map());
+  const timers = useRef(new Map<string, number>());
 
-  const chooseFilter = (next: Filter) => {
-    setFilter(next);
-    setTouched(new Set());
-    saveChoice('einkauf-filter', next);
-  };
-  const chooseView = (next: View) => {
+  const toggleView = () => {
+    const next: View = view === 'rezept' ? 'abteilung' : 'rezept';
     setView(next);
-    setTouched(new Set());
     saveChoice('einkauf-ansicht', next);
   };
 
   useEffect(() => window.scrollTo(0, 0), []);
+  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
+
+  const where = (item: ShoppingItem): Where => pinned.get(item.id) ?? (item.done ? 'da' : 'offen');
+  const pin = (id: string, place: Where) => {
+    setPinned((m) => new Map(m).set(id, place));
+    window.clearTimeout(timers.current.get(id));
+    timers.current.set(id, window.setTimeout(() => {
+      timers.current.delete(id);
+      setPinned((m) => {
+        const next = new Map(m);
+        next.delete(id);
+        return next;
+      });
+    }, MOVE_DELAY_MS));
+  };
 
   const load = async () => {
     try {
@@ -127,7 +142,7 @@ export function ShoppingRoute() {
   const toggle = async (item: ShoppingItem) => {
     const done = !item.done;
     setHint(null);
-    setTouched((t) => new Set(t).add(item.id));
+    pin(item.id, where(item));
     change((l) => withDone(l, item.id, done)); // show it at once, Notion follows
     try {
       await api.setBought(item.id, done);
@@ -142,18 +157,17 @@ export function ShoppingRoute() {
       ? withDone(l, item.id, false)
       : { ...l, extras: [...l.extras.filter((i) => i.id !== item.id), item] }));
 
-  const visible = (item: ShoppingItem) =>
-    filter === 'alle' || touched.has(item.id) || (filter === 'fehlend' ? !item.done : item.done);
+  const missing = (item: ShoppingItem) => where(item) === 'offen';
   const linked = list.groups
     .map((g) => ({ ...g, recipe: planned.find((r) => sameId(r.id, g.recipe_id)) }))
     .filter((g): g is typeof g & { recipe: Recipe } => Boolean(g.recipe) && g.items.length > 0);
   const groups = linked
-    .map((g) => ({ ...g, items: g.items.filter(visible) }))
+    .map((g) => ({ ...g, items: g.items.filter(missing) }))
     .filter((g) => g.items.length > 0);
-  const extras = list.extras.filter(visible);
-  const aisles = view === 'abteilung'
-    ? byAisle(list, planned).map((a) => ({ ...a, items: a.items.filter(visible) })).filter((a) => a.items.length > 0)
-    : [];
+  const extras = list.extras.filter(missing);
+  const merged = mergedItems(list, planned);
+  const aisles = view === 'abteilung' ? byAisle(list, merged.filter(missing)) : [];
+  const atHome = merged.filter((item) => !missing(item)).sort((a, b) => a.name.localeCompare(b.name, 'de'));
   const shown = view === 'abteilung' ? aisles.length > 0 : groups.length > 0 || extras.length > 0;
   const open = openCount(list);
   const fromRecipes = planned.length === 1 ? 'Aus 1 Rezept dieser Woche' : `Aus ${planned.length} Rezepten dieser Woche`;
@@ -171,28 +185,17 @@ export function ShoppingRoute() {
       )}
 
       {(linked.length > 0 || list.extras.length > 0) && (
-        <div class="page-pad einkauf-steuerung">
-          <div class="kg-seg kg-seg-voll" role="group" aria-label="Sortierung">
-            {VIEWS.map((v) => (
-              <button key={v} type="button" aria-pressed={view === v} onClick={() => chooseView(v)}>
-                {VIEW_LABEL[v]}
-              </button>
-            ))}
-          </div>
-          <div class="kg-seg kg-seg-voll einkauf-filter" role="group" aria-label="Zutaten zeigen">
-            {FILTERS.map((f) => (
-              <button key={f} type="button" aria-pressed={filter === f} onClick={() => chooseFilter(f)}>
-                {FILTER_LABEL[f]}
-              </button>
-            ))}
-          </div>
+        <div class="page-pad toolbar">
+          <button type="button" class="sort-button" onClick={toggleView}>
+            <span class="meta">Sortiert nach</span>
+            {VIEW_LABEL[view]}
+            <AufklappenIcon size={18} />
+          </button>
         </div>
       )}
 
       {(linked.length > 0 || list.extras.length > 0) && !shown && (
-        <p class="page-pad text-klein muted">
-          {filter === 'fehlend' ? 'Es fehlt nichts. Alles für die Rezepte der Woche ist da.' : 'Noch nichts auf Lager.'}
-        </p>
+        <p class="page-pad text-klein muted">Es fehlt nichts. Alles für die Rezepte der Woche ist da.</p>
       )}
 
       {planned.length === 0 && (
@@ -253,6 +256,25 @@ export function ShoppingRoute() {
       )}
 
       {list.can_add && <AddExtra onAdded={added} />}
+
+      {atHome.length > 0 && (
+        <section class="einkauf-gruppe page-pad einkauf-da" aria-label="Schon da">
+          <button type="button" class="einkauf-da-kopf" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+            <span>Schon da</span>
+            <span class="einkauf-da-zahl">{atHome.length}</span>
+            <AufklappenIcon size={20} />
+          </button>
+          {showDone && (
+            <ul class="einkauf-liste">
+              {atHome.map((item) => (
+                <Line key={item.id} item={item} prefix="da" disabled={!list.can_check} onToggle={toggle}
+                  amount={item.amounts.join(' + ') || null}
+                  note={item.recipes.length ? `für ${item.recipes.join(', ')}` : 'Eigener Artikel'} />
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
     </Frame>
   );
