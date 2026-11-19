@@ -6,6 +6,7 @@ from koch_guru.page_content import (
     generated_sections,
     german_amount,
     german_temperatures,
+    ingredients_in_step,
     ingredient_line,
     notes_text,
     parse_content,
@@ -70,7 +71,8 @@ def test_bot_page_becomes_info_ingredients_steps_and_photo():
         {"name": "Eier", "amount": "2", "emoji": "🥚"},
         {"name": "Salz", "amount": None, "emoji": None},
     ]
-    assert content["steps"] == [{"text": "Süßkartoffeln würfeln."}, {"text": "Alles 25 Minuten köcheln."}]
+    # "uses" points to the ingredients a step mentions, for amounts next to the step.
+    assert content["steps"] == [{"text": "Süßkartoffeln würfeln.", "uses": [0]}, {"text": "Alles 25 Minuten köcheln."}]
     assert content["blocks"] == [
         {"type": "heading", "level": 2, "text": [{"text": "Originalfoto"}]},
         {"type": "image", "url": "https://files.example/photo.jpg?X-Amz-Signature=1", "caption": ""},
@@ -189,7 +191,7 @@ def test_page_without_headings_guesses_ingredients_then_steps():
     ]
     assert content["ingredients"][0] == {"name": "Pasta", "amount": "450 g", "emoji": "🍝"}
     assert content["steps"] == [
-        {"text": "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water."},
+        {"text": "Blanch the peas for 60 seconds in salted water. Drain and plunge them into ice water.", "uses": [3]},
         {"text": "Keep 1-2 handfuls for decoration."},
     ]
     assert content["blocks"] == []
@@ -216,7 +218,7 @@ def test_marker_lines_numbered_steps_and_servings():
         {"name": "garlic, minced", "amount": "2 Zehen", "emoji": None},
     ]
     assert content["steps"] == [
-        {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes."},
+        {"text": "Tear your block of tofu into nugget sized pieces and bake them for 25 minutes.", "uses": [1]},
         {"text": "Serve with rice."},
     ]
     assert content["blocks"] == [{"type": "paragraph", "text": [{"text": "ENJOY!"}]}]
@@ -273,7 +275,9 @@ def test_clipped_page_with_intro_tips_and_step_labels():
         {"name": "mixed green veg, such as courgettes, fennel, tenderstem broccoli, peas.", "amount": "600g",
          "emoji": None},
     ]
-    assert content["steps"] == [{"text": "Bring a saucepan of water to a boil."}, {"text": "Cut your pak choi into quarters."}]
+    assert content["steps"] == [
+        {"text": "Bring a saucepan of water to a boil."}, {"text": "Cut your pak choi into quarters.", "uses": [1]},
+    ]
     assert [b["text"][0]["text"][:20] for b in content["blocks"]] == [
         "The easiest meal in ", "That, my friend, is ", "Tags", "Recipes you may like",
     ]
@@ -360,3 +364,23 @@ def test_generated_sections_finds_only_what_generation_wrote():
 def test_generated_sections_on_a_page_without_them():
     blocks = [{"id": "p", "type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Nur eine Notiz"}]}}]
     assert generated_sections(blocks) == {"ids": [], "info": False, "ingredients": 0, "steps": 0}
+
+
+def test_ingredients_in_step():
+    items = [
+        {"name": "Süßkartoffeln", "amount": "600 g"},
+        {"group": "Für den Dip"},
+        {"name": "Zwiebel, fein gehackt", "amount": "1"},
+        {"name": "Gemüsebrühe", "amount": "800 ml"},
+        {"name": "Salz und Pfeffer", "amount": None},
+        {"name": "Eier", "amount": "2"},
+        {"name": "Olivenöl", "amount": "2 EL"},
+        {"name": "Kirschtomaten", "amount": "200 g"},
+        {"name": "Ei", "amount": "1"},
+    ]
+    assert ingredients_in_step("Süßkartoffel schälen und die Zwiebeln hacken.", items) == [0, 2]
+    assert ingredients_in_step("Mit der Brühe aufgießen, mit Salz abschmecken.", items) == [3, 4]
+    # "ein" is no egg, and "Öl" alone is too short to stand for "Olivenöl"
+    assert ingredients_in_step("Ein Ei verquirlen und in Öl braten.", items) == [5, 8]
+    assert ingredients_in_step("Die Tomaten halbieren.", items) == [7]
+    assert ingredients_in_step("Servieren.", items) == []

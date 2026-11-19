@@ -9,6 +9,7 @@ import { RecipeRoute } from './pages/Recipe';
 import { WeekRoute } from './pages/Week';
 import { TodayRoute } from './pages/Today';
 import { ShoppingRoute } from './pages/Shopping';
+import { CookRoute } from './pages/Cook';
 import { PlaceholderPage } from './pages/Placeholder';
 import { BrandScreen } from './pages/Status';
 
@@ -77,6 +78,7 @@ export function App() {
             <Route path="/" component={TodayRoute} />
             <Route path="/rezepte" component={RecipesRoute} />
             <Route path="/rezepte/:id" component={RecipeRoute} />
+            <Route path="/rezepte/:id/kochen" component={CookRoute} />
             <Route path="/woche" component={WeekRoute} />
             <Route path="/einkauf" component={ShoppingRoute} />
             <Route default component={NotFoundRoute} />

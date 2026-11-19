@@ -245,6 +245,46 @@ def best_match(text: str, names: Iterable[str]) -> str | None:
     return best[2] if best else None
 
 
+# --- Ingredients in a step --------------------------------------------------------------
+
+_NAME_PARTS = re.compile(r"\b(?:und|and|oder|or)\b|[&/]")
+
+
+def _heads(name: str) -> list[str]:
+    """The nouns an ingredient goes by in a step.
+
+    "rote Linsen" -> linsen, "Hokkaido-Kürbis" -> kurbis, "Salz und Pfeffer" -> salz, pfeffer,
+    "Zwiebel, fein gehackt" -> zwiebel, "Juice of ½ lime" -> lime.
+    """
+    base = re.split(r"[,(;]", name, maxsplit=1)[0]
+    heads = []
+    for part in _NAME_PARTS.split(base):
+        words = [w for w in _words(part) if not w.isnumeric()]
+        if words:
+            heads.append(words[-1])
+    return heads
+
+
+def _step_mentions(words: list[str], text: str, head: str) -> bool:
+    if len(head) <= 3:
+        # "Ei", "Öl", "oil": only the word itself or a plain plural, never "ein" or "Olivenöl".
+        return any(w == head or w in (head + "er", head + "s", head + "e") for w in words)
+    if _mentions(words, text, head):
+        return True
+    # The step names only the end of a compound: "Brühe" for "Gemüsebrühe".
+    return any(len(w) >= 4 and head.endswith(w) for w in words)
+
+
+def ingredients_in_step(text: str, items: list[dict[str, Any]]) -> list[int]:
+    """Positions in `items` of the ingredients a step mentions, for amounts next to the step."""
+    folded, words = fold(text), _words(text)
+    return [
+        index
+        for index, item in enumerate(items)
+        if "name" in item and any(_step_mentions(words, folded, head) for head in _heads(item["name"]))
+    ]
+
+
 class IconFinder:
     """Picks the icon of the ingredient a free-text line talks about: an emoji or an image address."""
 
@@ -473,7 +513,7 @@ def parse_content(
     minutes: int | None = None
     servings: str | None = None
     items: list[dict[str, Any]] = []
-    steps: list[dict[str, str]] = []
+    steps: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
     section: str | None = None
     guess: str | None = None  # "ingredients" or "steps" while reading a page without headings; "off" after
@@ -570,6 +610,9 @@ def parse_content(
         items.pop()
     while steps and "group" in steps[-1]:
         steps.pop()
+    for step in steps:
+        if "text" in step and (uses := ingredients_in_step(step["text"], items)):
+            step["uses"] = uses
 
     return {
         "minutes": minutes,
