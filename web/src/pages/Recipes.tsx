@@ -5,7 +5,8 @@ import { recipePath, sourceOf } from '../lib/recipe';
 import { averageStars, starsText } from '../lib/cooked';
 import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
-import { hasOwnEmoji, tagStyle, tagWord } from '../lib/tiles';
+import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { categories } from '../lib/categories';
 import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, PlusIcon, SucheIcon } from '../components/icons';
 
@@ -41,14 +42,10 @@ export function searchInRecipes(query: string): void {
   remembered.scrollY = 0;
 }
 
-/** A category from Heute: shown as the first chip, selected, until the next one. */
-let category: Chip | null = null;
-
-/** Open the overview filtered by a category from Heute, e.g. "Italienisch" with all its tags. */
-export function showCategory(label: string, matches: (r: Recipe) => boolean): void {
-  category = { key: `kategorie:${label}`, label, matches };
+/** Open the overview filtered by one chip, e.g. a category on Heute. */
+export function filterRecipesBy(key: string): void {
   remembered.query = '';
-  remembered.selected = [category.key];
+  remembered.selected = [key];
   remembered.scrollY = 0;
 }
 
@@ -60,7 +57,10 @@ function buildChips(recipes: Recipe[]): Chip[] {
     for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'));
   };
-  const tags = count(recipes.flatMap((r) => r.tags)).map(([tag]) => ({
+  // The categories of Heute first, in their order; they cover their tags ("Italian" under "Italienisch").
+  const fixed = categories(recipes);
+  const covered = new Set(fixed.flatMap((c) => c.tags));
+  const tags = count(recipes.flatMap((r) => r.tags).filter((t) => !covered.has(t))).map(([tag]) => ({
     key: `tag:${tag}`,
     label: tag,
     emoji: hasOwnEmoji(tag) ? undefined : tagStyle(tag)?.chip,
@@ -74,7 +74,7 @@ function buildChips(recipes: Recipe[]): Chip[] {
       label: origin,
       matches: (r: Recipe) => r.origin.includes(origin),
     }));
-  return [...tags, ...origins];
+  return [...fixed.map(({ key, label, emoji, matches }) => ({ key, label, emoji, matches })), ...tags, ...origins];
 }
 
 function RecipeCard({ recipe }: { recipe: Recipe }) {
@@ -132,15 +132,7 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
   const [view, setView] = useState<View>(() => load('ansicht', ['kacheln', 'liste'] as const, 'kacheln'));
   const [sort, setSort] = useState<Sort>(() => load('sortierung', SORTS, 'neu'));
 
-  const chips = useMemo(() => {
-    const own = buildChips(recipes);
-    if (!category) return own;
-    // The category from Heute comes first; a tag chip of the same name ("🥬 Veggie") becomes it.
-    const wanted = category.label.toLocaleLowerCase('de');
-    const same = own.findIndex((c) => tagWord(c.label).toLocaleLowerCase('de') === wanted);
-    if (same < 0) return [category, ...own];
-    return [{ ...own[same], key: category.key, matches: category.matches }, ...own.filter((_, i) => i !== same)];
-  }, [recipes]);
+  const chips = useMemo(() => buildChips(recipes), [recipes]);
 
   const words = useMemo(() => queryWords(query), [query]);
   const searching = words.length > 0;
@@ -165,8 +157,8 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
     setSort(next);
     save('sortierung', next);
   };
-  const toggleChip = (key: string) =>
-    setSelected((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
+  // One filter at a time: a tap selects it, a second tap shows all again.
+  const toggleChip = (key: string) => setSelected((current) => (current.includes(key) ? [] : [key]));
 
   return (
     <main class="page rezepte-mit-knopf">

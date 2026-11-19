@@ -6,11 +6,10 @@ import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
-import { CATEGORIES, categoryMatcher, namedRecipe } from '../lib/categories';
-import { averageStars } from '../lib/cooked';
+import { categories, categoryPhotos } from '../lib/categories';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon, PlusIcon, SucheIcon, WeiterIcon } from '../components/icons';
-import { RecipeRow, searchInRecipes, showCategory } from './Recipes';
+import { filterRecipesBy, RecipeRow, searchInRecipes } from './Recipes';
 
 const SEARCH_PREVIEW = 5;
 
@@ -139,40 +138,21 @@ function DailySuggestion({ pick, canSwitch, onNext }: { pick: DailyPick; canSwit
   );
 }
 
-type Category = { label: string; recipe: Recipe; matches: (recipe: Recipe) => boolean };
-
-/** The fixed categories that have recipes, each with its chosen photo or one of its recipes. */
-function categoriesOf(recipes: Recipe[]): Category[] {
-  const used = new Set<string>();
-  const categories: Category[] = [];
-  for (const def of CATEGORIES) {
-    const matches = categoryMatcher(def, recipes);
-    if (!matches) continue;
-    const matching = recipes.filter(matches);
-    // The chosen photo; else a recipe with a photo, the best rated first, each only once.
-    const ranked = [...matching].sort((a, b) =>
-      Number(Boolean(b.image)) - Number(Boolean(a.image))
-      || (averageStars(b) ?? 0) - (averageStars(a) ?? 0)
-      || (b.created || '').localeCompare(a.created || ''));
-    const recipe = namedRecipe(recipes, def.photo) ?? ranked.find((r) => !used.has(r.id)) ?? ranked[0];
-    used.add(recipe.id);
-    categories.push({ label: def.label, recipe, matches });
-  }
-  return categories;
-}
-
 function Categories({ recipes }: { recipes: Recipe[] }) {
-  const categories = useMemo(() => categoriesOf(recipes), [recipes]);
-  if (categories.length === 0) return null;
+  const shown = useMemo(() => {
+    const photos = categoryPhotos(recipes, new Date());
+    return categories(recipes).flatMap((c) => (photos.has(c.label) ? [{ ...c, recipe: photos.get(c.label)! }] : []));
+  }, [recipes]);
+  if (shown.length === 0) return null;
   return (
     <section class="heute-kategorien" aria-labelledby="kategorien-titel">
       <div class="page-pad abschnitt-kopf">
         <h2 id="kategorien-titel" class="abschnitt">Worauf habt ihr Lust?</h2>
       </div>
       <ul class="heute-kategorien-reihe">
-        {categories.map(({ label, recipe, matches }) => (
-          <li key={label}>
-            <a class="heute-kategorie" href="/rezepte" onClick={() => showCategory(label, matches)}>
+        {shown.map(({ key, label, recipe }) => (
+          <li key={key}>
+            <a class="heute-kategorie" href="/rezepte" onClick={() => filterRecipesBy(key)}>
               <RecipeImage recipe={recipe} size="kreis" />
               <span class="heute-kategorie-name">{label}</span>
             </a>
