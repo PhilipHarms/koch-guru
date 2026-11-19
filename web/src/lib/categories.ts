@@ -25,7 +25,7 @@ export const CATEGORIES: CategoryDef[] = [
     fallback: (r) => Boolean(r.created) && Date.now() - Date.parse(r.created!) < NEW_DAYS * 86_400_000,
   },
   {
-    label: 'Favorit', tags: ['favorit', 'favoriten', 'favorite', 'favourite', 'favorites', 'lieblingsrezept'],
+    label: 'Favoriten', tags: ['favorit', 'favoriten', 'favorite', 'favourite', 'favorites', 'lieblingsrezept'],
     photo: 'Black Bean Enchiladas',
     fallback: (r) => (averageStars(r) ?? 0) >= 4,
   },
@@ -108,7 +108,7 @@ export function categories(recipes: Recipe[]): Category[] {
 }
 
 function tagEmoji(label: string): string | undefined {
-  return { Neu: '🌟', Favorit: '❤️', Veggie: '🥬' }[label];
+  return { Neu: '🌟', Favoriten: '❤️', Veggie: '🥬' }[label];
 }
 
 const newestFirst = (a: Recipe, b: Recipe) => (b.created || '').localeCompare(a.created || '');
