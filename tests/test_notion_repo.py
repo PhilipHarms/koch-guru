@@ -229,8 +229,13 @@ class FakeNotion:
             return httpx.Response(200, json=found) if found else self.error(404, "object_not_found")
         if path.startswith("/v1/pages/") and request.method == "PATCH":
             page_id = path.rsplit("/", 1)[1]
-            self.updates.append((page_id, json.loads(request.content)))
-            return httpx.Response(200, json={"object": "page", "id": page_id, "properties": {}})
+            body = json.loads(request.content)
+            self.updates.append((page_id, body))
+            answer = {"object": "page", "id": page_id, "properties": {}}
+            if (body.get("cover") or {}).get("type") == "file_upload":
+                upload = body["cover"]["file_upload"]["id"]
+                answer["cover"] = {"type": "file", "file": {"url": f"https://files.notion.so/{upload}.jpg?X-Amz-Signature=1"}}
+            return httpx.Response(200, json=answer)
         return self.error(404, "object_not_found")
 
 
@@ -674,3 +679,17 @@ def test_long_notes_drop_the_oldest_lines():
     current = "\n".join(f"{n:02d}.01.2026 Philip: " + "x" * 200 for n in range(1, 40))
     result = append_note(current, "19.11.2026 Philip: neu")
     assert len(result) <= NOTE_LIMIT and result.endswith("neu") and not result.startswith("01.01")
+
+
+async def test_own_photo_becomes_the_cover():
+    fake = FakeNotion(total=3)
+    repo = make_repo(fake)
+    recipes = await repo.list_recipes()
+    target = recipes[0]
+    updated = await repo.set_cover_photo(target.id, b"jpeg-bytes", "image/jpeg")
+    assert fake.uploads == [{"mode": "single_part", "filename": "titelbild.jpg", "content_type": "image/jpeg"}]
+    assert fake.sent[0][0] == "fu-1" and b"jpeg-bytes" in fake.sent[0][2]
+    assert fake.updates[-1] == (target.id, {"cover": {"type": "file_upload", "file_upload": {"id": "fu-1"}}})
+    assert updated.cover == "https://files.notion.so/fu-1.jpg?X-Amz-Signature=1"
+    cached = next(r for r in await repo.list_recipes() if r.id == target.id)
+    assert cached.cover == updated.cover and fake.query_calls == 1  # no reload needed

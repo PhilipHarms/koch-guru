@@ -656,18 +656,30 @@ class RecipeRepository:
         ids = []
         try:
             for nr, (data, mime) in enumerate(draft.photos, start=1):
-                filename = f"rezept-{nr}.{mime.rsplit('/', 1)[-1].replace('jpeg', 'jpg')}"
-                upload = await self._client.file_uploads.create(
-                    mode="single_part", filename=filename, content_type=mime
-                )
-                await self._client.file_uploads.send(
-                    file_upload_id=upload["id"], file=(filename, data, mime)
-                )
-                ids.append(upload["id"])
+                ids.append(await self._upload_file(f"rezept-{nr}", data, mime))
         except APIResponseError as exc:
             log.warning("Foto-Upload zu Notion fehlgeschlagen (%s), speichere ohne Foto.", exc.code)
             return []
         return ids
+
+    async def _upload_file(self, stem: str, data: bytes, mime: str) -> str:
+        """Upload a file to Notion; returns the id to attach it to a page or block."""
+        filename = f"{stem}.{mime.rsplit('/', 1)[-1].replace('jpeg', 'jpg')}"
+        upload = await self._client.file_uploads.create(mode="single_part", filename=filename, content_type=mime)
+        await self._client.file_uploads.send(file_upload_id=upload["id"], file=(filename, data, mime))
+        return upload["id"]
+
+    async def set_cover_photo(self, page_id: str, data: bytes, mime: str) -> Recipe | None:
+        """Upload a photo and make it the page cover. Returns the recipe with the new cover."""
+        upload_id = await self._upload_file("titelbild", data, mime)
+        page = await self._client.pages.update(
+            page_id=page_id, cover={"type": "file_upload", "file_upload": {"id": upload_id}}
+        )
+        cover = _page_cover(page)
+        updated = self._replace_cached(page_id, cover=cover) if cover else None
+        if updated is None:
+            self._cache = None  # not cached or no address in the answer: read the page again
+        return updated
 
     # --- Filling a page with a generated recipe -------------------------------------
 

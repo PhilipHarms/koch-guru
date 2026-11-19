@@ -502,3 +502,186 @@ def test_rating_is_only_ever_your_own():
     assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 3}).status_code == 409
     repo.supports_cooked = False
     assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={}).status_code == 409
+
+
+# --- Rezept hinzufügen ----------------------------------------------------------------
+
+class ImportRepo(FakeRepo):
+    tag_options = ["Veggie", "Winter", "Schnell"]
+    origin_options = ["Green Feast"]
+
+    def __init__(self):
+        super().__init__()
+        self.created = []
+        self.linked = []
+        self.covers = []
+        self.fail_create = False
+
+    async def find_existing(self, draft):
+        from koch_guru.services.importer import normalize_url
+        for recipe in self.recipes:
+            if draft.url and recipe.url and normalize_url(recipe.url) == normalize_url(draft.url):
+                return recipe, "link"
+        for recipe in self.recipes:
+            if draft.name and recipe.name.casefold() == draft.name.casefold():
+                return recipe, "name"
+        return None, ""
+
+    async def create_recipe(self, draft):
+        if self.fail_create:
+            raise APIResponseError(code=APIErrorCode.InternalServerError, status=500, message="kaputt",
+                                   headers=httpx.Headers(), raw_body_text="")
+        self.created.append(draft)
+        recipe = Recipe(id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", name=draft.name,
+                        notion_url="https://notion.so/neu", url=draft.url, tags=tuple(draft.tags))
+        self.recipes = [*self.recipes, recipe]
+        return recipe
+
+    async def link_ingredients(self, page_id, link, *, unlink_ids=()):
+        self.linked.append((page_id, list(link)))
+        return []
+
+    async def set_cover_photo(self, page_id, data, mime):
+        self.covers.append((page_id, data, mime))
+        self._set(page_id, cover="https://files.notion.so/titelbild.jpg")
+
+
+class ImportLLM:
+    def __init__(self):
+        self.seen = []
+
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.services.generate import PreparedIngredient, PreparedRecipe
+        from koch_guru.services.importer import Classification, PhotoRecipe
+        self.seen.append(output_type.__name__)
+        if output_type is Classification:
+            return Classification(tags=["Veggie", "Erfunden"], emoji="🍛")
+        if output_type is PhotoRecipe:
+            return PhotoRecipe(ist_rezept=True, name="Linsensuppe", zutaten=["200 g Linsen"], schritte=["Kochen."],
+                               portionen="2", minuten=30, tags=["Winter"], emoji="🍲", quelle="Green Feast")
+        assert output_type is PreparedRecipe
+        return PreparedRecipe(zutaten=[
+            PreparedIngredient(zeile="500 g Kürbis", zutat="Kürbis", emoji="🎃", immer_da=False),
+            PreparedIngredient(zeile="1 Bund Koriander", zutat="Koriander", emoji="🌿", immer_da=False),
+            PreparedIngredient(zeile="1 Prise Salz", zutat="Salz", emoji="🧂", immer_da=True),
+        ], schritte=["Kürbis würfeln.", "Kochen."], portionen="4 Portionen")
+
+
+NEW_PAGE = """<script type="application/ld+json">{"@type": "Recipe", "name": "Kürbis-Curry",
+ "image": "https://example.org/curry.jpg", "totalTime": "PT40M",
+ "recipeIngredient": ["500 g pumpkin", "1 bunch coriander", "salt"], "recipeInstructions": "Cook."}</script>"""
+
+
+def page_client(text=NEW_PAGE):
+    return httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text=text, headers={"content-type": "text/html"})))
+
+
+def test_add_recipe_from_a_link():
+    repo, llm = ImportRepo(), ImportLLM()
+    c = signed_in(repo, http=page_client(), llm=llm)
+    preview = c.post("/api/import", json={"url": " https://example.org/curry "}).json()
+    assert preview["name"] == "Kürbis-Curry" and preview["icon"] == "🍛"
+    assert preview["tags"] == ["Veggie"] and preview["tag_options"] == ["Veggie", "Winter", "Schnell"]
+    assert preview["site"] == "example.org" and preview["from_photo"] is False and preview["similar"] is None
+    assert preview["image"] == "https://example.org/curry.jpg" and preview["minutes"] == 40
+    assert [(i["zutat"], i["status"], i["include"]) for i in preview["ingredients"]] == [
+        ("Kürbis", "existing", True), ("Koriander", "new", True), ("Salz", "existing", False),
+    ]
+    assert repo.created == []  # nothing in Notion before saving
+
+    body = {"name": preview["name"], "tags": ["Winter", "Gibt es nicht"], "servings": preview["servings"],
+            "steps": preview["steps"], "cover": True,
+            "ingredients": [{"line": i["line"], "zutat": i["zutat"], "emoji": i["emoji"], "link": i["include"],
+                             "aisle": i["aisle"]} for i in preview["ingredients"]]}
+    saved = c.post(f"/api/import/{preview['draft_id']}/save", json=body).json()
+    (draft,) = repo.created
+    assert draft.name == "Kürbis-Curry" and draft.url == "https://example.org/curry"
+    assert draft.tags == ["Winter"] and draft.icon == "🍛" and draft.image == "https://example.org/curry.jpg"
+    assert draft.ingredients == ["500 g Kürbis", "1 Bund Koriander", "1 Prise Salz"]
+    assert draft.servings == "4 Portionen" and draft.total_minutes == 40
+    assert repo.linked == [(saved["recipe"]["id"], [("Kürbis", "🎃", None), ("Koriander", "🌿", None)])]
+    assert saved["recipe"]["name"] == "Kürbis-Curry" and saved["not_created"] == []
+    # The preview is used up: a second tap does not create the recipe twice.
+    assert c.post(f"/api/import/{preview['draft_id']}/save", json=body).status_code == 410
+
+
+def test_add_recipe_without_the_photo_of_the_page():
+    repo = ImportRepo()
+    c = signed_in(repo, http=page_client(), llm=ImportLLM())
+    preview = c.post("/api/import", json={"url": "https://example.org/curry"}).json()
+    body = {"name": "Mein Curry", "tags": [], "steps": [], "cover": False, "ingredients": []}
+    c.post(f"/api/import/{preview['draft_id']}/save", json=body)
+    assert repo.created[0].image is None and repo.created[0].name == "Mein Curry"
+    assert repo.linked == []
+
+
+def test_a_failed_save_can_be_tried_again():
+    repo = ImportRepo()
+    c = signed_in(repo, http=page_client(), llm=ImportLLM())
+    preview = c.post("/api/import", json={"url": "https://example.org/curry"}).json()
+    body = {"name": "Curry", "tags": [], "steps": [], "ingredients": []}
+    repo.fail_create = True
+    assert c.post(f"/api/import/{preview['draft_id']}/save", json=body).status_code == 502
+    repo.fail_create = False
+    assert c.post(f"/api/import/{preview['draft_id']}/save", json=body).status_code == 200
+
+
+def test_a_link_already_in_the_collection_is_not_read_again():
+    llm = ImportLLM()
+    c = signed_in(ImportRepo(), http=page_client(), llm=llm)
+    answer = c.post("/api/import", json={"url": "https://www.example.com/dal/"}).json()
+    assert answer == {"existing": answer["existing"]} and answer["existing"]["name"] == "Kürbis-Dal"
+    assert llm.seen == []
+
+
+def test_a_recipe_with_the_same_name_is_flagged():
+    page = NEW_PAGE.replace("Kürbis-Curry", "Pasta e ceci")
+    preview = signed_in(ImportRepo(), http=page_client(page), llm=ImportLLM()).post(
+        "/api/import", json={"url": "https://example.org/pasta"}).json()
+    assert preview["similar"]["name"] == "Pasta e ceci"
+
+
+def test_add_recipe_from_photos():
+    import base64
+    repo, llm = ImportRepo(), ImportLLM()
+    c = signed_in(repo, llm=llm)
+    photo = {"data": "data:image/jpeg;base64," + base64.b64encode(b"jpeg-bytes").decode(), "type": "image/jpeg"}
+    preview = c.post("/api/import", json={"photos": [photo], "caption": "Green Feast, S. 112"}).json()
+    assert llm.seen == ["PhotoRecipe", "PreparedRecipe"]
+    assert preview["name"] == "Linsensuppe" and preview["origin"] == ["Green Feast"]
+    assert preview["from_photo"] is True and preview["site"] is None and preview["url"] is None
+    body = {"name": "Linsensuppe", "tags": preview["tags"], "steps": preview["steps"], "ingredients": []}
+    c.post(f"/api/import/{preview['draft_id']}/save", json=body)
+    (draft,) = repo.created
+    assert draft.photos == [(b"jpeg-bytes", "image/jpeg")] and draft.origin == ["Green Feast"]
+    assert draft.tags == ["Winter"] and draft.url == ""
+
+
+def test_add_recipe_input_errors():
+    import base64
+    c = signed_in(ImportRepo(), llm=ImportLLM())
+    assert c.post("/api/import", json={"url": "instagram curry"}).status_code == 422
+    assert c.post("/api/import", json={}).status_code == 422
+    bad_type = {"data": base64.b64encode(b"x").decode(), "type": "application/pdf"}
+    assert c.post("/api/import", json={"photos": [bad_type]}).status_code == 422
+    broken = {"data": "kein base64!", "type": "image/jpeg"}
+    assert c.post("/api/import", json={"photos": [broken]}).status_code == 422
+    assert c.post("/api/import/unbekannt/save", json={"name": "x", "steps": [], "ingredients": []}).status_code == 410
+    assert signed_in(ImportRepo()).post("/api/import", json={"url": "https://example.org"}).status_code == 503
+    assert client(ImportRepo(), llm=ImportLLM()).post("/api/import", json={"url": "https://example.org"}).status_code == 401
+    no_recipe = signed_in(ImportRepo(), http=page_client("<html><body>Hallo</body></html>"), llm=ImportLLM())
+    answer = no_recipe.post("/api/import", json={"url": "https://example.org/blog"})
+    assert answer.status_code == 422 and "kaum Text" in answer.json()["detail"]
+
+
+def test_own_photo_as_cover():
+    import base64
+    repo = ImportRepo()
+    c = signed_in(repo)
+    data = c.put(f"/api/recipes/{PASTA_ID}/cover",
+                 json={"data": base64.b64encode(b"jpeg-bytes").decode(), "type": "image/jpeg"}).json()
+    assert repo.covers == [(PASTA_ID, b"jpeg-bytes", "image/jpeg")]
+    assert data["image"].startswith(f"/api/recipes/{PASTA_ID.replace('-', '')}/image?v=")
+    assert c.put(f"/api/recipes/{PASTA_ID}/cover", json={"data": "eA==", "type": "text/plain"}).status_code == 422
+    assert client(repo).put(f"/api/recipes/{PASTA_ID}/cover", json={"data": "eA==", "type": "image/png"}).status_code == 401

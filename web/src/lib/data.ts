@@ -11,6 +11,8 @@ export type AppData = {
   cookedSupported: boolean;
   /** Replace one recipe after the server confirmed a change. */
   updateRecipe: (recipe: Recipe) => void;
+  /** A recipe that was just created in Notion. */
+  addRecipe: (recipe: Recipe) => void;
   /** Untick "This Week?" everywhere after the server cleared the list. */
   weekCleared: () => void;
 };

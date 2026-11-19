@@ -163,3 +163,16 @@ async def test_prepare_suggests_an_aisle_for_new_ingredients_only():
         ("Tofu", None),  # not one of the tags
     ]
     assert "<abteilungen>\nGemüse\nGewürze\n</abteilungen>" in llm.requests[-1]
+
+
+async def test_link_without_photo_in_the_recipe_data_uses_the_page_preview():
+    import httpx
+
+    from koch_guru.services.generate import read_from_link
+    page = ('<html><head><meta property="og:image" content="https://example.com/dal.jpg">'
+            '<script type="application/ld+json">{"@type": "Recipe", "name": "Dal", '
+            '"recipeIngredient": ["500 g Kürbis"]}</script></head></html>')
+    http = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text=page, headers={"content-type": "text/html"})))
+    draft = await read_from_link("https://example.com/dal", http, llm=None)
+    assert draft.image == "https://example.com/dal.jpg"

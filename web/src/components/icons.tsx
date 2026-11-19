@@ -62,7 +62,23 @@ export const PortionenIcon = (p: Props) => (
   <Svg {...p}><path d="M3 12a9 9 0 0 1 18 0" /><path d="M2 12h20M7 16h10" /></Svg>
 );
 export const HakenIcon = (p: Props) => <Svg strokeWidth={2.4} {...p}><path d="m5 12 5 5 9-10" /></Svg>;
+export const MinusIcon = (p: Props) => <Svg strokeWidth={2.2} {...p}><path d="M5 12h14" /></Svg>;
 export const PlusIcon = (p: Props) => <Svg strokeWidth={2.2} {...p}><path d="M12 5v14M5 12h14" /></Svg>;
 export const ExternIcon = (p: Props) => (
   <Svg strokeWidth={2} {...p}><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></Svg>
+);
+export const LinkIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+    <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+  </Svg>
+);
+export const KameraIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+    <circle cx="12" cy="13.5" r="3.5" />
+  </Svg>
+);
+export const BildIcon = (p: Props) => (
+  <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></Svg>
 );

@@ -25,11 +25,16 @@ class DraftStore:
         self._clock = clock
         self._drafts: dict[str, PendingDraft] = {}
 
-    def add(self, draft: RecipeDraft, preview_html: str) -> str:
+    def add(self, draft: RecipeDraft, preview_html: str = "") -> str:
         self._expire()
         draft_id = secrets.token_hex(4)
         self._drafts[draft_id] = PendingDraft(draft, preview_html, self._clock())
         return draft_id
+
+    def get(self, draft_id: str) -> PendingDraft | None:
+        """Look at a draft without taking it out, e.g. to retry a failed save."""
+        self._expire()
+        return self._drafts.get(draft_id)
 
     def pop(self, draft_id: str) -> PendingDraft | None:
         """Take a draft out. A second button press then finds nothing."""

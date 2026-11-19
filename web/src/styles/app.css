@@ -388,3 +388,53 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .stern-platz { width: 36px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 .blatt-hintergrund { position: fixed; inset: 0; z-index: 51; background: rgba(34, 27, 22, 0.35); }
 .kochmodus-alle.kochmodus-gekocht { z-index: 52; }
+
+/* Portionen */
+.portionen { display: inline-flex; align-items: center; gap: var(--space-6); }
+.portionen-knopf { width: 36px; height: 36px; }
+.portionen-zahl { display: inline-flex; flex-direction: column; align-items: center; min-width: 92px; font-size: 15px; font-weight: 600; }
+.portionen-zurueck {
+  padding: 0; border: 0; background: none; color: var(--brand-text); font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+
+/* Rezept hinzufügen */
+.rezepte-neu { position: fixed; z-index: 9; right: max(var(--space-20), calc(50vw - 240px + var(--space-20))); bottom: calc(var(--size-nav) + env(safe-area-inset-bottom) + var(--space-20)); }
+.import { padding-bottom: 32px; }
+.import-kopf { flex-direction: row; justify-content: space-between; align-items: center; }
+.import-kopf .kg-iconbtn { flex-shrink: 0; }
+.import-eingabe, .import-feld { display: flex; flex-direction: column; gap: var(--space-14); }
+.import-eingabe { gap: var(--space-20); }
+.import-feld label, .import-feld p { margin: 0; }
+.import-quelle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.import-quelle button { height: var(--size-touch); gap: var(--space-8); color: var(--ink); font-weight: 700; }
+.import-quelle button[aria-pressed="true"] { background: var(--surface); box-shadow: var(--shadow-raised); }
+.import-feld .kg-search input { font-size: 16px; }
+.import-fotoknoepfe { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
+.import-fotoknopf { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-10); height: 128px; border: 1.5px dashed var(--line-strong); border-radius: 20px; background: var(--surface-warm); color: var(--ink); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.import-fotoknopf .kg-icon { color: var(--brand-text); }
+.import-fotoknopf:disabled { opacity: 0.5; cursor: default; }
+.import-fotos { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-8); }
+.import-fotos li { position: relative; }
+.import-fotos img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 12px; background: var(--foto-platzhalter); }
+.import-foto-weg { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; min-width: 0; background: var(--surface); box-shadow: var(--shadow-raised); }
+.import-vorschau { gap: 18px; padding-top: 0; padding-bottom: 0; border: 0; border-radius: 0; }
+.import-vorschau a { color: var(--brand-text); font-weight: 600; }
+.rezepte-mit-knopf { padding-bottom: 104px; }
+.import-titel { display: flex; align-items: center; gap: var(--space-14); }
+.import-emoji { flex-shrink: 0; width: 72px; height: 72px; border-radius: 18px; background: var(--surface-cream); display: flex; align-items: center; justify-content: center; font-size: 38px; }
+.import-titel-text { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.import-tags { display: flex; flex-direction: column; gap: var(--space-8); }
+.import-tag-liste { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+.import-tag { height: 40px; padding: 0 var(--space-14); font-size: 14px; }
+.import-tag[aria-pressed="true"] { background: var(--tag-veggie-bg); border-color: var(--tag-veggie-bg); color: var(--tag-veggie-ink); }
+.import-knoepfe .kg-btn-sekundaer { flex: 1; }
+.import-knoepfe .kg-btn-primaer { flex: 2; }
+.import-fertig { display: flex; flex-direction: column; align-items: center; gap: var(--space-14); padding-top: var(--space-28); text-align: center; }
+.import-fertig h2, .import-fertig p { margin: 0; }
+.import-fertig .kg-btn-gross { width: 100%; box-sizing: border-box; }
+.import-haken { width: 72px; height: 72px; border-radius: 36px; background: var(--tag-veggie-bg); color: var(--tag-veggie-ink); display: flex; align-items: center; justify-content: center; }
+.import-nochmal { background: transparent; border: 0; color: var(--brand-text); font-weight: 700; }
+
+/* Eigenes Titelbild */
+.rezept-foto { position: absolute; top: calc(var(--space-20) + env(safe-area-inset-top)); right: var(--space-16); padding: 0 var(--space-14); gap: var(--space-6); font-size: 14px; color: var(--ink); }
+.rezept-foto-fehler { position: absolute; top: calc(76px + env(safe-area-inset-top)); left: var(--space-16); right: var(--space-16); padding: var(--space-8) var(--space-12); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-raised); }
