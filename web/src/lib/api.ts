@@ -59,6 +59,8 @@ export type GeneratedIngredient = {
   status: 'linked' | 'existing' | 'new' | 'group';
   staple: boolean;
   include: boolean;
+  /** Supermarket aisle (tag in Notion) for a new ingredient. */
+  aisle?: string | null;
 };
 
 export type GeneratedRecipe = {
@@ -80,7 +82,7 @@ export type GeneratedSave = {
   url: string | null;
   servings: string | null;
   minutes: number | null;
-  ingredients: { line: string; zutat: string; emoji: string | null; link: boolean }[];
+  ingredients: { line: string; zutat: string; emoji: string | null; link: boolean; aisle?: string | null }[];
   steps: string[];
   cover: string | null;
   replace_cover?: boolean;
@@ -104,6 +106,8 @@ export type ShoppingItem = {
   done: boolean;
   /** Other recipes of the week that need it too. */
   also: string[];
+  /** Supermarket aisle from the ingredient's tags in Notion. */
+  aisle: string | null;
 };
 
 export type ShoppingList = {
@@ -112,6 +116,8 @@ export type ShoppingList = {
   open: number;
   can_check: boolean;
   can_add: boolean;
+  /** Aisles in the order of the tags in Notion. */
+  aisles: string[];
 };
 export type Me = { user: string; name: string };
 

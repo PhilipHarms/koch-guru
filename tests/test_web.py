@@ -67,7 +67,7 @@ class FakeRepo:
     async def save_generated(self, page_id, *, draft, link, cover=None, replace_ids=(), unlink_ids=(), new_link=None):
         self.saved = (page_id, draft, link, cover)
         self.saved_changes = {"replace_ids": list(replace_ids), "unlink_ids": list(unlink_ids), "new_link": new_link}
-        return [name for name, _ in link if name == "Unbekannt"]
+        return [entry[0] for entry in link if entry[0] == "Unbekannt"]
 
     async def page_blocks(self, page_id, *, refresh=False):
         self.content_requests = getattr(self, "content_requests", []) + [page_id]
@@ -354,7 +354,7 @@ def test_generate_preview_and_save():
     assert cover == "https://example.com/dal.jpg"
     assert page_id == DAL_ID and draft.ingredients == ["500 g Kürbis", "1 Prise Salz", "1 Stück"]
     assert draft.url == "https://example.com/dal" and draft.servings == "4 Portionen"
-    assert link == [("Kürbis", "🎃"), ("Unbekannt", None)]
+    assert link == [("Kürbis", "🎃", None), ("Unbekannt", None, None)]
 
 
 class CutOffLLM:

@@ -261,7 +261,8 @@ type GenerateState =
 function statusText(item: GeneratedIngredient, include: boolean): string {
   if (item.status === 'linked') return 'schon verknüpft';
   if (!include) return item.staple ? 'immer da, wird nicht verknüpft' : 'wird nicht verknüpft';
-  return item.status === 'existing' ? `verknüpft mit „${item.zutat}“` : `wird als „${item.zutat}“ neu angelegt`;
+  if (item.status === 'existing') return `verknüpft mit „${item.zutat}“`;
+  return `wird als „${item.zutat}“ neu angelegt${item.aisle ? `, Abteilung ${item.aisle}` : ''}`;
 }
 
 function Generate({ recipe, link, canGenerate, onSaved, again }: {
@@ -376,6 +377,7 @@ function Generate({ recipe, link, canGenerate, onSaved, again }: {
         new_link: newLink,
         ingredients: value.ingredients.map((item, i) => ({
           line: item.line, zutat: item.zutat, emoji: item.emoji, link: include[i] && item.status !== 'linked',
+          aisle: item.aisle ?? null,
         })),
       });
       updateRecipe(result.recipe);

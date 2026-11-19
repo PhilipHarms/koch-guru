@@ -46,6 +46,7 @@ def item_json(ingredient: Ingredient, *, amount: str | None = None, also: list[s
         "amount": amount,
         "done": ingredient.bought,
         "also": also or [],
+        "aisle": ingredient.aisle,
     }
 
 
@@ -57,6 +58,7 @@ def shopping_list(
     today: str,
     can_check: bool,
     can_add: bool,
+    aisles: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Groups per recipe of the week, then own items.
 
@@ -93,4 +95,5 @@ def shopping_list(
         "open": len(open_ids),
         "can_check": can_check,
         "can_add": can_add,
+        "aisles": list(aisles),  # order of the aisles as set in Notion
     }

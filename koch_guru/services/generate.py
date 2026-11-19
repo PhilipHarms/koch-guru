@@ -11,6 +11,7 @@ preview first, and saving is a separate step.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 
 import logging
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ Pfeffer, Wasser und Ähnliches. Sonst false.
 Ofentemperaturen in °C.
 6. `portionen` auf Deutsch, z. B. „4 Portionen“, oder leer.
 7. Zwischenüberschriften in der Zutatenliste, etwa „Pineapple salsa“ oder „For the dressing“, bleiben eigene Zeilen, aber als Gruppe: `zeile` wie „Für die Ananas-Salsa:“, `gruppe` true, `zutat` und `emoji` leer, `immer_da` false. Bei allen anderen Zeilen ist `gruppe` false.
+8. `abteilung`: die Abteilung im Supermarkt aus <abteilungen>, in der man die Zutat findet, exakt so geschrieben wie dort. Passt keine oder gibt es keine Liste, lass das Feld leer.
 """
 
 
@@ -77,6 +79,7 @@ class PreparedIngredient(BaseModel):
     emoji: str = Field(description="Genau ein Emoji für die Zutat")
     immer_da: bool = Field(description="true für Salz, Pfeffer, Wasser und Ähnliches")
     gruppe: bool = Field(default=False, description="true für Zwischenüberschriften wie „Für die Salsa:“")
+    abteilung: str = Field(default="", description="Abteilung im Supermarkt aus der Liste, oder leer")
 
 
 class PreparedRecipe(BaseModel):
@@ -94,6 +97,7 @@ class GeneratedIngredient:
     existing: str | None  # name in the ingredients database, if there is one
     linked: bool = False  # already linked to this recipe
     group: bool = False  # a heading like "Für die Salsa:", never linked
+    aisle: str | None = None  # supermarket aisle for a new ingredient, from the tags in Notion
 
     @property
     def include(self) -> bool:
@@ -114,6 +118,7 @@ class GeneratedIngredient:
             "status": "linked" if self.linked else "existing" if self.existing else "new",
             "staple": self.staple,
             "include": self.include,
+            "aisle": self.aisle,
         }
 
 
@@ -190,6 +195,7 @@ async def prepare(
     llm: StructuredLLM,
     known: list[str],
     linked: list[str],
+    aisles: Sequence[str] = (),
 ) -> GeneratedRecipe:
     """German lines and steps, and the ingredient from the database behind every line."""
     request = (
@@ -198,6 +204,8 @@ async def prepare(
         f"Portionen: {draft.servings or ''}\n\n"
         "<vorhandene_zutaten>\n" + "\n".join(known) + "\n</vorhandene_zutaten>"
     )
+    if aisles:
+        request += "\n\n<abteilungen>\n" + "\n".join(aisles) + "\n</abteilungen>"
     result = await llm.structured(
         system=PREPARE_PROMPT,
         messages=[{"role": "user", "content": request}],
@@ -222,6 +230,8 @@ async def prepare(
             staple=item.immer_da,
             existing=existing,
             linked=bool(existing and fold(existing) in linked_keys),
+            # Only an aisle that exists as a tag; existing ingredients keep theirs.
+            aisle=item.abteilung.strip() if item.abteilung.strip() in aisles and not existing else None,
         ))
     return GeneratedRecipe(
         source=draft.url or "Foto",
@@ -234,14 +244,16 @@ async def prepare(
     )
 
 
-async def prepare_import(draft: RecipeDraft, llm: StructuredLLM, known: list[str]) -> RecipeDraft:
+async def prepare_import(
+    draft: RecipeDraft, llm: StructuredLLM, known: list[str], aisles: Sequence[str] = ()
+) -> RecipeDraft:
     """For an import in the bot: German lines and steps, and the ingredients to link.
 
     Links follow the preselection of "Rezept generieren": everything except what is always
     at home. If the model fails, the draft stays as it was and nothing gets linked.
     """
     try:
-        prepared = await prepare(draft, llm, known, linked=[])
+        prepared = await prepare(draft, llm, known, linked=[], aisles=aisles)
     except Exception as exc:  # the import still works, only without links
         log.warning("Zutaten für den Import nicht aufbereitet: %r", exc)
         return draft
@@ -252,7 +264,7 @@ async def prepare_import(draft: RecipeDraft, llm: StructuredLLM, known: list[str
         if not item.include or not name or fold(name) in seen:
             continue
         seen.add(fold(name))
-        links.append(IngredientLink(name=name, emoji=item.emoji, new=item.existing is None))
+        links.append(IngredientLink(name=name, emoji=item.emoji, new=item.existing is None, aisle=item.aisle))
     return dataclasses.replace(
         draft,
         ingredients=[i.line for i in prepared.ingredients],
@@ -271,6 +283,7 @@ async def generate(
     llm: StructuredLLM,
     known: list[str],
     linked: list[str],
+    aisles: Sequence[str] = (),
 ) -> GeneratedRecipe:
     """Read the recipe from its link; if that gives nothing, from the notes and photos on the page."""
     draft: RecipeDraft | None = None
@@ -291,7 +304,7 @@ async def generate(
         )
     if not draft.ingredients:
         raise RecipeImportError("Im Rezept habe ich keine Zutaten gefunden.")
-    result = await prepare(draft, llm, known, linked)
+    result = await prepare(draft, llm, known, linked, aisles)
     if draft.source in ("notes",):
         result.source, result.url, result.image = "Notizen", None, None
     return result

@@ -32,6 +32,7 @@ class PropertyNames:
     bought: str = "Bought"  # checkbox, ticked off on the shopping list
     bought_on: str = "Gekauft am"  # date, created by the app if missing
     extra: str = "Extra"  # checkbox for own items without a recipe, created by the app if missing
+    aisle: str = "Tags"  # select or multi-select: the supermarket aisle, e.g. "Milchprodukt"
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             bought=get("NOTION_PROP_BOUGHT", defaults.bought),
             bought_on=get("NOTION_PROP_BOUGHT_ON", defaults.bought_on),
             extra=get("NOTION_PROP_EXTRA", defaults.extra),
+            aisle=get("NOTION_PROP_AISLE", defaults.aisle),
         ),
         recipe_cache_seconds=cache_seconds,
         app_users=app_users,

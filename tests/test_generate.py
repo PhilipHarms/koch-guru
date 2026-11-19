@@ -24,9 +24,11 @@ class FakeLLM:
     def __init__(self, result, extracted=None):
         self.result, self.extracted = result, extracted
         self.calls = []
+        self.requests = []
 
     async def structured(self, *, system, messages, output_type):
         self.calls.append(output_type)
+        self.requests.append(messages[0]["content"])
         if output_type is PreparedRecipe:
             return self.result
         if output_type is ExtractedRecipe:
@@ -145,3 +147,19 @@ async def test_generate_without_source_or_readable_page():
                                                               portionen="", minuten=0, tags=[], emoji=""))
     with pytest.raises(RecipeImportError, match="kein Rezept"):
         await generate(link=None, notes=NOTES, photo_urls=[], http=http_with({}), llm=no_recipe, known=[], linked=[])
+
+
+async def test_prepare_suggests_an_aisle_for_new_ingredients_only():
+    llm = FakeLLM(PreparedRecipe(zutaten=[
+        PreparedIngredient(zeile="2 Pak Choi", zutat="Pak Choi", emoji="🥬", immer_da=False, abteilung="Gemüse"),
+        PreparedIngredient(zeile="1 TL Kurkuma", zutat="Kurkuma", emoji="🫙", immer_da=False, abteilung="Gewürze"),
+        PreparedIngredient(zeile="Tofu", zutat="Tofu", emoji="🧈", immer_da=False, abteilung="Kühlregal"),
+    ], schritte=["Kochen."], portionen=""))
+    draft = RecipeDraft(name="Bowl", url="https://example.com/b", ingredients=["x"])
+    result = await prepare(draft, llm, [*KNOWN, "Kurkuma"], linked=[], aisles=("Gemüse", "Gewürze"))
+    assert [(i.zutat, i.aisle) for i in result.ingredients] == [
+        ("Pak Choi", "Gemüse"),
+        ("Kurkuma", None),  # already in the database, keeps its own tags
+        ("Tofu", None),  # not one of the tags
+    ]
+    assert "<abteilungen>\nGemüse\nGewürze\n</abteilungen>" in llm.requests[-1]

@@ -61,6 +61,9 @@ class IngredientFields:
     bought: str | None = None  # checkbox
     bought_on: str | None = None  # date
     extra: str | None = None  # checkbox
+    aisle: str | None = None  # select or multi-select
+    aisle_kind: str | None = None  # "select" or "multi_select"
+    aisles: tuple[str, ...] = ()  # its options, in the order set in Notion
 
 
 def _same_name(a: str, b: str) -> bool:
@@ -80,6 +83,15 @@ def page_to_ingredient(page: dict[str, Any], name: str, fields: IngredientFields
         return bool((props.get(prop) or {}).get("checkbox")) if prop else False
 
     date = ((props.get(fields.bought_on) or {}).get("date") or {}) if fields.bought_on else {}
+    aisle = None
+    if fields.aisle:
+        prop = props.get(fields.aisle) or {}
+        value = prop.get(prop.get("type", ""))
+        options = value if isinstance(value, list) else [value] if isinstance(value, dict) else []
+        names = [o.get("name") for o in options if o and o.get("name")]
+        # With several tags, the first one in Notion's own order decides.
+        names.sort(key=lambda n: fields.aisles.index(n) if n in fields.aisles else len(fields.aisles))
+        aisle = names[0] if names else None
     return Ingredient(
         id=page["id"],
         name=name,
@@ -87,6 +99,7 @@ def page_to_ingredient(page: dict[str, Any], name: str, fields: IngredientFields
         bought=checkbox(fields.bought),
         bought_on=(date.get("start") or "")[:10] or None,
         extra=checkbox(fields.extra),
+        aisle=aisle,
     )
 
 
@@ -393,7 +406,15 @@ class RecipeRepository:
                 extra = extra or (w.extra if w.extra in missing else None)
         if bought is None:
             log.warning("Die Zutaten-Datenbank hat keine Checkbox %r; abhaken geht nicht.", w.bought)
-        self._ingredient_fields = IngredientFields(bought=bought, bought_on=bought_on, extra=extra)
+        aisle = _find_property(schema, w.aisle, "multi_select") or _find_property(schema, w.aisle, "select")
+        aisles: tuple[str, ...] = ()
+        if aisle:
+            kind = schema[aisle]["type"]
+            aisles = tuple(o["name"] for o in (schema[aisle].get(kind) or {}).get("options") or [] if o.get("name"))
+        self._ingredient_fields = IngredientFields(
+            bought=bought, bought_on=bought_on, extra=extra, aisle=aisle,
+            aisle_kind=schema[aisle]["type"] if aisle else None, aisles=aisles,
+        )
         return self._ingredient_fields
 
     @property
@@ -644,12 +665,13 @@ class RecipeRepository:
         return not_created
 
     async def link_ingredients(
-        self, page_id: str, link: Sequence[tuple[str, str | None]], *, unlink_ids: Sequence[str] = ()
+        self, page_id: str, link: Sequence[tuple[str, ...]], *, unlink_ids: Sequence[str] = ()
     ) -> list[str]:
         """Link ingredients to a recipe; names not in the ingredients database get a page first.
 
-        `link` holds (ingredient name, emoji). Links that are already set stay, except
-        `unlink_ids`. Returns the names that could not be created or linked.
+        `link` holds (ingredient name, emoji) or (name, emoji, aisle); the aisle tags a new
+        ingredient. Links that are already set stay, except `unlink_ids`.
+        Returns the names that could not be created or linked.
         """
         if self._mapping is None:
             await self.connect()
@@ -661,10 +683,10 @@ class RecipeRepository:
         not_created: list[str] = []
         ids: list[str] = []
         by_key = {name.casefold(): ingredient_id for name, ingredient_id in self._ingredient_ids.items()}
-        for name, emoji in link:
+        for name, emoji, *rest in link:
             found = by_key.get(name.casefold())
             if found is None:
-                found = await self._create_ingredient(name, emoji)
+                found = await self._create_ingredient(name, emoji, rest[0] if rest else None)
                 if found is None:
                     not_created.append(name)
                     continue
@@ -685,11 +707,11 @@ class RecipeRepository:
             except APIResponseError as exc:
                 # The content is on the page already; report the links instead of failing.
                 log.warning("Zutaten nicht verknüpft: %s", exc.code)
-                not_created = [name for name, _ in link]
+                not_created = [entry[0] for entry in link]
         self._cache = None  # reload ingredients and links on next access
         return not_created
 
-    async def _create_ingredient(self, name: str, emoji: str | None) -> str | None:
+    async def _create_ingredient(self, name: str, emoji: str | None, aisle: str | None = None) -> str | None:
         if self._ingredient_source is None:
             return None
         data_source_id, title_prop = self._ingredient_source
@@ -697,6 +719,12 @@ class RecipeRepository:
             "parent": {"type": "data_source_id", "data_source_id": data_source_id},
             "properties": {title_prop: {"title": [_text(name)]}},
         }
+        fields = self.ingredient_fields
+        if aisle and fields.aisle and aisle in fields.aisles:  # only tags that exist
+            option = {"name": aisle}
+            kwargs["properties"][fields.aisle] = (
+                {"multi_select": [option]} if fields.aisle_kind == "multi_select" else {"select": option}
+            )
         if emoji:
             kwargs["icon"] = {"type": "emoji", "emoji": emoji}
         try:
