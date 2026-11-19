@@ -3,8 +3,13 @@ import { useEffect, useState } from 'preact/hooks';
 import { api, type Recipe, type ShoppingItem, type ShoppingList } from '../lib/api';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sameId } from '../lib/recipe';
+import { load as loadChoice, save as saveChoice } from '../lib/storage';
 import { RecipeImage } from '../components/RecipeImage';
 import { PlusIcon } from '../components/icons';
+
+const FILTERS = ['alle', 'fehlend', 'lager'] as const;
+type Filter = (typeof FILTERS)[number];
+const FILTER_LABEL: Record<Filter, string> = { alle: 'Alle', fehlend: 'Fehlend', lager: 'Auf Lager' };
 
 type State = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; list: ShoppingList };
 
@@ -30,6 +35,15 @@ export function ShoppingRoute() {
   const plannedKey = planned.map((r) => r.id).join(',');
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [hint, setHint] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>(() => loadChoice('einkauf-filter', FILTERS, 'fehlend'));
+  // Lines ticked or unticked here stay in view until the filter changes, so a wrong tap can be undone.
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+
+  const chooseFilter = (next: Filter) => {
+    setFilter(next);
+    setTouched(new Set());
+    saveChoice('einkauf-filter', next);
+  };
 
   useEffect(() => window.scrollTo(0, 0), []);
 
@@ -75,6 +89,7 @@ export function ShoppingRoute() {
   const toggle = async (item: ShoppingItem) => {
     const done = !item.done;
     setHint(null);
+    setTouched((t) => new Set(t).add(item.id));
     change((l) => withDone(l, item.id, done)); // show it at once, Notion follows
     try {
       await api.setBought(item.id, done);
@@ -89,9 +104,15 @@ export function ShoppingRoute() {
       ? withDone(l, item.id, false)
       : { ...l, extras: [...l.extras.filter((i) => i.id !== item.id), item] }));
 
-  const groups = list.groups
+  const visible = (item: ShoppingItem) =>
+    filter === 'alle' || touched.has(item.id) || (filter === 'fehlend' ? !item.done : item.done);
+  const linked = list.groups
     .map((g) => ({ ...g, recipe: planned.find((r) => sameId(r.id, g.recipe_id)) }))
     .filter((g): g is typeof g & { recipe: Recipe } => Boolean(g.recipe) && g.items.length > 0);
+  const groups = linked
+    .map((g) => ({ ...g, items: g.items.filter(visible) }))
+    .filter((g) => g.items.length > 0);
+  const extras = list.extras.filter(visible);
   const open = openCount(list);
   const fromRecipes = planned.length === 1 ? 'Aus 1 Rezept dieser Woche' : `Aus ${planned.length} Rezepten dieser Woche`;
   const summary = planned.length === 0 && list.extras.length === 0
@@ -104,6 +125,24 @@ export function ShoppingRoute() {
       {!list.can_check && (
         <p class="page-pad text-klein muted">
           Die Zutaten-Datenbank hat keine Checkbox „Bought“. Ohne sie lässt sich nichts abhaken.
+        </p>
+      )}
+
+      {(linked.length > 0 || list.extras.length > 0) && (
+        <div class="page-pad">
+          <div class="kg-seg kg-seg-voll einkauf-filter" role="group" aria-label="Zutaten zeigen">
+            {FILTERS.map((f) => (
+              <button key={f} type="button" aria-pressed={filter === f} onClick={() => chooseFilter(f)}>
+                {FILTER_LABEL[f]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(linked.length > 0 || list.extras.length > 0) && groups.length === 0 && extras.length === 0 && (
+        <p class="page-pad text-klein muted">
+          {filter === 'fehlend' ? 'Es fehlt nichts. Alles für die Rezepte der Woche ist da.' : 'Noch nichts auf Lager.'}
         </p>
       )}
 
@@ -131,20 +170,20 @@ export function ShoppingRoute() {
         </section>
       ))}
 
-      {planned.length > 0 && groups.length === 0 && (
+      {planned.length > 0 && linked.length === 0 && (
         <p class="page-pad text-klein muted">
           Die Rezepte der Woche sind in Notion noch mit keinen Zutaten verknüpft.
         </p>
       )}
 
-      {list.extras.length > 0 && (
+      {extras.length > 0 && (
         <section class="einkauf-gruppe page-pad" aria-label="Eigene Artikel">
           <h2 class="einkauf-kopf">
             <span class="kg-bild kg-bild-gruppe einkauf-eigene" aria-hidden="true">🧺</span>
             <span>Eigene Artikel</span>
           </h2>
           <ul class="einkauf-liste">
-            {list.extras.map((item) => (
+            {extras.map((item) => (
               <Line key={item.id} item={item} prefix="eigene" disabled={!list.can_check} onToggle={toggle} />
             ))}
           </ul>
