@@ -7,9 +7,10 @@ import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { cookedLabel } from '../lib/cooked';
+import { chooseServings, chosenServings, scaleAmount, servingsCount } from '../lib/portions';
 import { Stars } from '../components/Stars';
 import { RecipeImage } from '../components/RecipeImage';
-import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { shortName } from './Cook';
 import { PlaceholderPage } from './Placeholder';
 
@@ -30,6 +31,11 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
   const [saving, setSaving] = useState(false);
   const [weekError, setWeekError] = useState<string | null>(null);
   const [notCreated, setNotCreated] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<number | null>(() => chosenServings(recipe.id));
+  const choose = (servings: number | null) => {
+    chooseServings(recipe.id, servings);
+    setChosen(servings);
+  };
 
   useEffect(() => window.scrollTo(0, 0), [recipe.id]);
 
@@ -60,6 +66,8 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
   };
 
   const ready = content.kind === 'ready' ? content.value : null;
+  const base = servingsCount(ready?.servings);
+  const factor = base && chosen ? chosen / base : 1;
   const link = sourceLink(recipe);
 
   return (
@@ -130,7 +138,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
             <button type="button" class="kg-btn kg-btn-sekundaer" onClick={() => setAttempt((n) => n + 1)}>Nochmal laden</button>
           </div>
         )}
-        {ready && <Ingredients content={ready} />}
+        {ready && <Ingredients recipe={recipe} content={ready} chosen={chosen} onChoose={choose} />}
         {notCreated.length > 0 && (
           <p class="text-klein hinweis" role="status">
             Rezept gespeichert, aber nicht verknüpft: {notCreated.join(', ')}. Dafür braucht KochGuru in Notion
@@ -138,7 +146,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
           </p>
         )}
         {ready && (
-          <Steps recipe={recipe} content={ready} link={link} onGenerated={(missing) => {
+          <Steps recipe={recipe} content={ready} link={link} factor={factor} onGenerated={(missing) => {
             setNotCreated(missing);
             setAttempt((n) => n + 1);
           }} />
@@ -154,13 +162,43 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
   );
 }
 
-function Ingredients({ content }: { content: RecipeContent }) {
+type IngredientsProps = {
+  recipe: Recipe;
+  content: RecipeContent;
+  chosen: number | null;
+  onChoose: (servings: number | null) => void;
+};
+
+function Ingredients({ content, chosen, onChoose }: IngredientsProps) {
   const count = content.ingredients.filter((i) => !('group' in i)).length;
+  const base = servingsCount(content.servings);
+  const servings = chosen ?? base;
+  const factor = base && servings ? servings / base : 1;
+  const set = (n: number) => onChoose(n === base ? null : n);
   return (
     <section class="rezept-abschnitt" aria-labelledby="zutaten-titel">
       <div class="abschnitt-kopf">
         <h2 id="zutaten-titel" class="abschnitt">Zutaten</h2>
-        {count > 0 && <p class="meta muted">{count === 1 ? '1 Zutat' : `${count} Zutaten`}</p>}
+        {base && servings && count > 0 ? (
+          <div class="portionen" role="group" aria-label="Portionen">
+            <button type="button" class="kg-iconbtn portionen-knopf" aria-label="Eine Portion weniger"
+              disabled={servings <= 1} onClick={() => set(servings - 1)}>
+              <MinusIcon size={18} />
+            </button>
+            <span class="portionen-zahl" aria-live="polite">
+              {servings === 1 ? '1 Portion' : `${servings} Portionen`}
+              {servings !== base && (
+                <button type="button" class="portionen-zurueck" onClick={() => set(base)}>statt {base}</button>
+              )}
+            </span>
+            <button type="button" class="kg-iconbtn portionen-knopf" aria-label="Eine Portion mehr"
+              disabled={servings >= 24} onClick={() => set(servings + 1)}>
+              <PlusIcon size={18} />
+            </button>
+          </div>
+        ) : count > 0 ? (
+          <p class="meta muted">{count === 1 ? '1 Zutat' : `${count} Zutaten`}</p>
+        ) : null}
       </div>
       {count === 0 ? (
         <p class="text-klein muted">In Notion sind keine Zutaten eingetragen.</p>
@@ -176,7 +214,7 @@ function Ingredients({ content }: { content: RecipeContent }) {
                 </span>
                 <span class="zutat-text">
                   <span class="zutat-name">{item.name}</span>
-                  {item.amount && <span class="meta muted">{item.amount}</span>}
+                  {item.amount && <span class="meta muted">{scaleAmount(item.amount, factor)}</span>}
                 </span>
               </li>
             ),
@@ -192,9 +230,15 @@ function initialOf(name: string): string {
   return name.match(/\p{L}/u)?.[0].toLocaleUpperCase('de') ?? '·';
 }
 
-type StepsProps = { recipe: Recipe; content: RecipeContent; link: string | null; onGenerated: (notCreated: string[]) => void };
+type StepsProps = {
+  recipe: Recipe;
+  content: RecipeContent;
+  link: string | null;
+  factor: number;
+  onGenerated: (notCreated: string[]) => void;
+};
 
-function Steps({ recipe, content, link, onGenerated }: StepsProps) {
+function Steps({ recipe, content, link, factor, onGenerated }: StepsProps) {
   let number = 0;
   // Notes or photos on the Notion page are a source too, e.g. when the link is Instagram.
   const hasNotes = content.blocks.length > 0;
@@ -221,7 +265,7 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
                 <span class="schritt-nummer" aria-hidden="true">{number}</span>
                 <div class="schritt-inhalt">
                   <p class="fliesstext">{step.text}</p>
-                  {step.uses && step.uses.length > 0 && <StepAmounts content={content} uses={step.uses} />}
+                  {step.uses && step.uses.length > 0 && <StepAmounts content={content} uses={step.uses} factor={factor} />}
                 </div>
               </li>
             );
@@ -301,10 +345,11 @@ function Rating({ recipe }: { recipe: Recipe }) {
 }
 
 /** Quietly, what the step needs: "600 g Süßkartoffeln · 1 Zwiebel". */
-function StepAmounts({ content, uses }: { content: RecipeContent; uses: number[] }) {
+function StepAmounts({ content, uses, factor }: { content: RecipeContent; uses: number[]; factor: number }) {
   const parts = [...new Set(uses.flatMap((i) => {
     const item = content.ingredients[i];
-    return item && 'name' in item ? [`${item.amount ? `${item.amount} ` : ''}${shortName(item.name)}`] : [];
+    const amount = item && 'name' in item ? scaleAmount(item.amount, factor) : null;
+    return item && 'name' in item ? [`${amount ? `${amount} ` : ''}${shortName(item.name)}`] : [];
   }))];
   return parts.length ? <p class="schritt-mengen meta muted">{parts.join(' · ')}</p> : null;
 }

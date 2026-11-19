@@ -388,3 +388,11 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .stern-platz { width: 36px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 .blatt-hintergrund { position: fixed; inset: 0; z-index: 51; background: rgba(34, 27, 22, 0.35); }
 .kochmodus-alle.kochmodus-gekocht { z-index: 52; }
+
+/* Portionen */
+.portionen { display: inline-flex; align-items: center; gap: var(--space-6); }
+.portionen-knopf { width: 36px; height: 36px; }
+.portionen-zahl { display: inline-flex; flex-direction: column; align-items: center; min-width: 92px; font-size: 15px; font-weight: 600; }
+.portionen-zurueck {
+  padding: 0; border: 0; background: none; color: var(--brand-text); font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}

@@ -4,6 +4,7 @@ import { useLocation } from 'preact-iso';
 import { api, type Ingredient, type Recipe, type RecipeContent } from '../lib/api';
 import { useData } from '../lib/data';
 import { clock, findDuration } from '../lib/duration';
+import { chosenServings, scaleAmount, servingsCount, servingsFactor } from '../lib/portions';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId } from '../lib/recipe';
 import { HakenIcon, KreuzIcon, ListeIcon, UhrIcon, WeiterIcon } from '../components/icons';
@@ -230,6 +231,8 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
     });
 
   const ingredients = content.ingredients;
+  const factor = servingsFactor(recipe.id, content.servings);
+  const servings = chosenServings(recipe.id) ?? servingsCount(content.servings);
   const used = uniqueLines(step.uses.map((i) => ingredients[i]).filter(Boolean));
 
   return (
@@ -281,7 +284,9 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
         {used.length > 0 && (
           <ul class="kochmodus-zutaten" aria-label="Zutaten für diesen Schritt">
             {used.map((item) => (
-              <li key={`${item.amount}|${item.name}`}>{item.amount ? `${item.amount} ` : ''}{shortName(item.name)}</li>
+              <li key={`${item.amount}|${item.name}`}>
+                {item.amount ? `${scaleAmount(item.amount, factor)} ` : ''}{shortName(item.name)}
+              </li>
             ))}
           </ul>
         )}
@@ -323,7 +328,9 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
       {showAll && (
         <section class="kochmodus-alle" aria-label="Alle Zutaten">
           <div class="kochmodus-alle-kopf">
-            <h2 class="titel-block">Alle Zutaten</h2>
+            <h2 class="titel-block">
+              Alle Zutaten{servings ? <span class="meta muted"> · {servings === 1 ? '1 Portion' : `${servings} Portionen`}</span> : null}
+            </h2>
             <button type="button" class="kg-iconbtn" aria-label="Schließen" onClick={() => setShowAll(false)}>
               <KreuzIcon size={20} />
             </button>
@@ -338,7 +345,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
                     {item.emoji ?? (item.icon ? <img src={item.icon} alt="" width={20} height={20} /> : '·')}
                   </span>
                   <span class="kochmodus-alle-name">{item.name}</span>
-                  {item.amount && <span class="kochmodus-alle-menge">{item.amount}</span>}
+                  {item.amount && <span class="kochmodus-alle-menge">{scaleAmount(item.amount, factor)}</span>}
                 </li>
               ),
             )}
