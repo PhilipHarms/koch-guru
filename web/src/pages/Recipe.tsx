@@ -1,7 +1,7 @@
 import { Fragment, type ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { api, type Block, type GeneratedIngredient, type GeneratedRecipe, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
+import { api, type Block, type GeneratedRecipe, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
 import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
@@ -10,7 +10,9 @@ import { cookedLabel } from '../lib/cooked';
 import { chooseServings, chosenServings, scaleAmount, servingsCount } from '../lib/portions';
 import { Stars } from '../components/Stars';
 import { RecipeImage } from '../components/RecipeImage';
-import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { IngredientChoice, initialOf } from '../components/IngredientChoice';
+import { preparePhoto } from '../lib/photos';
+import { ExternIcon, GekochtIcon, KameraIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { shortName } from './Cook';
 import { PlaceholderPage } from './Placeholder';
 
@@ -77,6 +79,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         <button type="button" class="kg-iconbtn kg-iconbtn-schwebend rezept-zurueck" aria-label="Zurück" onClick={goBack}>
           <ZurueckIcon />
         </button>
+        <CoverButton recipe={recipe} />
       </div>
 
       <div class="rezept-inhalt">
@@ -162,6 +165,38 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
   );
 }
 
+/** Take or pick an own photo as the cover in Notion. */
+function CoverButton({ recipe }: { recipe: Recipe }) {
+  const { updateRecipe } = useData();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      updateRecipe(await api.setCover(recipe.id, await preparePhoto(file, 1600)));
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button type="button" class="kg-btn kg-iconbtn-schwebend rezept-foto" disabled={busy} onClick={() => input.current?.click()}>
+        <KameraIcon size={18} />{busy ? 'Lädt hoch …' : recipe.image ? 'Foto ändern' : 'Foto hinzufügen'}
+      </button>
+      <input ref={input} class="kg-sr" type="file" accept="image/*" tabIndex={-1}
+        onChange={(e) => { const el = e.target as HTMLInputElement; upload(el.files?.[0]); el.value = ''; }} />
+      {error && <p class="fehler rezept-foto-fehler" role="alert">{error}</p>}
+    </>
+  );
+}
+
 type IngredientsProps = {
   recipe: Recipe;
   content: RecipeContent;
@@ -226,10 +261,6 @@ function Ingredients({ content, chosen, onChoose }: IngredientsProps) {
 }
 
 /** Without an emoji or icon in Notion, the ingredient's first letter fills the tile. */
-function initialOf(name: string): string {
-  return name.match(/\p{L}/u)?.[0].toLocaleUpperCase('de') ?? '·';
-}
-
 type StepsProps = {
   recipe: Recipe;
   content: RecipeContent;
@@ -371,13 +402,6 @@ type GenerateState =
       saving: boolean;
     }
   | { kind: 'error'; message: string };
-
-function statusText(item: GeneratedIngredient, include: boolean): string {
-  if (item.status === 'linked') return 'schon verknüpft';
-  if (!include) return item.staple ? 'immer da, wird nicht verknüpft' : 'wird nicht verknüpft';
-  if (item.status === 'existing') return `verknüpft mit „${item.zutat}“`;
-  return `wird als „${item.zutat}“ neu angelegt${item.aisle ? `, Abteilung ${item.aisle}` : ''}`;
-}
 
 function Generate({ recipe, link, canGenerate, onSaved, again }: {
   recipe: Recipe;
@@ -536,26 +560,7 @@ function Generate({ recipe, link, canGenerate, onSaved, again }: {
         {value.servings && <p class="meta muted">{value.servings}</p>}
       </div>
       <p class="text-klein muted">Angehakte Zutaten werden mit eurer Zutaten-Datenbank verknüpft und landen damit auf der Einkaufsliste.</p>
-      <ul class="zutaten">
-        {value.ingredients.map((item, index) => item.status === 'group' ? (
-          <li key={index} class="zutaten-gruppe overline">{item.name}</li>
-        ) : (
-          <li key={index} class="zutat generiert-zutat">
-            <label>
-              <input type="checkbox" checked={include[index]} disabled={item.status === 'linked' || saving}
-                onChange={() => toggle(index)} />
-              <span class="zutat-emoji" aria-hidden="true">{item.emoji ?? initialOf(item.name)}</span>
-              <span class="zutat-text">
-                <span class="zutat-name">{item.name}</span>
-                {item.amount && <span class="meta muted">{item.amount}</span>}
-                <span class={`meta generiert-status generiert-${include[index] ? item.status : 'aus'}`}>
-                  {statusText(item, include[index])}
-                </span>
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
+      <IngredientChoice items={value.ingredients} include={include} disabled={saving} onToggle={toggle} />
       {again && value.unlink && value.unlink.length > 0 && (
         <>
           <h3 class="titel-block">Bisher verknüpft, im neuen Rezept nicht dabei</h3>

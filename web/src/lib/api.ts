@@ -1,3 +1,5 @@
+import type { PhotoUpload } from './photos';
+
 export type Recipe = {
   id: string;
   name: string;
@@ -100,6 +102,32 @@ export type GeneratedSave = {
   new_link?: string | null;
 };
 
+/** A recipe read by "Rezept hinzufügen", not saved yet. */
+export type ImportPreview = GeneratedRecipe & {
+  draft_id: string;
+  name: string;
+  icon: string | null;
+  /** Chosen tags; `tag_options` are all tags in Notion. */
+  tags: string[];
+  tag_options: string[];
+  /** Cookbook, when the photo shows one. */
+  origin: string[];
+  /** e.g. "chefkoch.de"; null for photos. */
+  site: string | null;
+  from_photo: boolean;
+  /** A recipe of the same name already in the collection. */
+  similar: Recipe | null;
+};
+
+export type ImportSave = {
+  name: string;
+  tags: string[];
+  servings: string | null;
+  ingredients: GeneratedSave['ingredients'];
+  steps: string[];
+  cover: boolean;
+};
+
 export type RecipeList = {
   recipes: Recipe[];
   week_supported: boolean;
@@ -177,6 +205,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  importRecipe: (body: { url?: string; photos?: PhotoUpload[]; caption?: string }) =>
+    request<ImportPreview | { existing: Recipe }>('/api/import', { method: 'POST', body: JSON.stringify(body) }),
+  saveImport: (draftId: string, body: ImportSave) =>
+    request<{ recipe: Recipe; not_created: string[] }>(`/api/import/${encodeURIComponent(draftId)}/save`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  setCover: (id: string, photo: PhotoUpload) =>
+    request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/cover`, { method: 'PUT', body: JSON.stringify(photo) }),
   shoppingList: () => request<ShoppingList>('/api/shopping-list'),
   setBought: (id: string, bought: boolean) =>
     request<ShoppingItem>(`/api/ingredients/${encodeURIComponent(id)}`, {

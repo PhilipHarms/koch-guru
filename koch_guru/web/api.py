@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import dataclasses
 import hashlib
 import logging
 from typing import Any
@@ -16,8 +19,18 @@ from koch_guru.llm import ModelError
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.page_content import fold, generated_sections, image_urls, notes_text, parse_content
-from koch_guru.services.generate import generate
-from koch_guru.services.importer import RecipeDraft, RecipeImportError
+from koch_guru.services.drafts import DraftStore
+from koch_guru.services.generate import generate, prepare
+from koch_guru.services.importer import (
+    MAX_PHOTOS,
+    PHOTO_TYPES,
+    Photo,
+    RecipeDraft,
+    RecipeImportError,
+    filter_tags,
+    import_from_photos,
+    import_from_url,
+)
 from koch_guru.services.recommend import recommend
 from koch_guru.services.shopping import amounts_from_content, item_json, shopping_list, today
 from koch_guru.web.auth import current_user, display_name
@@ -421,4 +434,147 @@ async def rate(recipe_id: str, body: Rating, request: Request, user: str = Depen
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Die Rezeptdatenbank hat kein Feld „Bewertung {person}“.")
     recipe = await find_recipe(repo, recipe_id)
     await repo.set_rating(recipe.id, person, body.stars or None)
+    return recipe_json(await find_recipe(repo, recipe.id))
+
+
+# --- Rezept hinzufügen (link or photos) ----------------------------------------------
+
+MAX_UPLOAD_BYTES = 8_000_000  # one photo; the app sends them downscaled, so far less in practice
+
+
+class UploadedPhoto(BaseModel):
+    data: str = Field(min_length=1, max_length=12_000_000)  # base64, optionally as a data: URL
+    type: str = Field(max_length=40)
+
+
+def decode_photo(photo: UploadedPhoto) -> Photo:
+    if photo.type not in PHOTO_TYPES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Dieses Bildformat kann ich nicht lesen.")
+    encoded = photo.data.split(",", 1)[1] if photo.data.startswith("data:") else photo.data
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Das Foto ist beschädigt.") from exc
+    if not data or len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, detail="Das Foto ist zu groß.")
+    return data, photo.type
+
+
+class ImportRequest(BaseModel):
+    url: str | None = Field(default=None, max_length=2000)
+    photos: list[UploadedPhoto] = Field(default_factory=list, max_length=MAX_PHOTOS)
+    caption: str = Field(default="", max_length=300)  # where the photographed recipe is from
+
+
+def drafts_of(request: Request) -> DraftStore:
+    return request.app.state.drafts
+
+
+@router.post("/import")
+async def import_recipe(body: ImportRequest, request: Request) -> dict[str, Any]:
+    """Read a recipe from a link or photos, like the bot does. Writes nothing yet.
+
+    Returns a preview with a `draft_id` for saving, or `existing` when the link is already
+    in the collection.
+    """
+    llm = llm_of(request)
+    repo = repo_of(request)
+    await repo.list_recipes()  # loads tag options and the names in the ingredients database
+    photos = [decode_photo(p) for p in body.photos]
+    url = None
+    if not photos:
+        url = web_link(body.url)
+        if url is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Füg einen Link ein, der mit http:// oder https:// beginnt, oder wähl Fotos aus.",
+            )
+        existing, reason = await repo.find_existing(RecipeDraft(name="", url=url))
+        if reason == "link":
+            return {"existing": recipe_json(existing)}
+    try:
+        if photos:
+            draft = await import_from_photos(photos, body.caption, llm, repo.tag_options, repo.origin_options)
+        else:
+            draft = await import_from_url(url, request.app.state.http, llm, repo.tag_options)
+            existing, reason = await repo.find_existing(draft)  # the link after redirects
+            if reason == "link":
+                return {"existing": recipe_json(existing)}
+        prepared = await prepare(draft, llm, repo.ingredient_names, linked=[], aisles=repo.ingredient_fields.aisles)
+    except RecipeImportError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except ModelError as exc:
+        log.warning("Rezept hinzufügen: Modell ohne Antwort: %r", exc.__cause__ or exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except Exception as exc:  # the model or a site failed in an unexpected way
+        log.warning("Rezept hinzufügen fehlgeschlagen: %r", exc, exc_info=True)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="Das hat nicht geklappt. Versuch es gleich noch einmal."
+        ) from exc
+    similar, reason = await repo.find_existing(draft)
+    data = prepared.as_json()
+    data.update({
+        "draft_id": drafts_of(request).add(draft),
+        "name": draft.name,
+        "icon": draft.icon,
+        "tags": draft.tags,
+        "tag_options": repo.tag_options,
+        "origin": draft.origin,
+        "site": draft.site or None,
+        "from_photo": bool(draft.photos),
+        "similar": recipe_json(similar) if reason == "name" and similar else None,
+    })
+    return data
+
+
+class ImportSave(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    servings: str | None = Field(default=None, max_length=100)
+    ingredients: list[GeneratedLine] = Field(max_length=80)
+    steps: list[str] = Field(max_length=60)
+    cover: bool = False  # the photo of the linked page as the Notion cover
+
+
+@router.post("/import/{draft_id}/save")
+async def save_import(draft_id: str, body: ImportSave, request: Request) -> dict[str, Any]:
+    """Create the recipe in Notion from the reviewed preview and link the chosen ingredients."""
+    repo = repo_of(request)
+    drafts = drafts_of(request)
+    pending = drafts.get(draft_id)
+    if pending is None:
+        raise HTTPException(status.HTTP_410_GONE, detail="Die Vorschau ist abgelaufen. Lies das Rezept bitte noch einmal ein.")
+    image = pending.draft.image
+    draft = dataclasses.replace(
+        pending.draft,
+        name=body.name.strip() or pending.draft.name,
+        tags=filter_tags(body.tags, repo.tag_options),
+        servings=(body.servings or "").strip() or None,
+        ingredients=[i.line.strip() for i in body.ingredients if i.line.strip()],
+        steps=[s.strip()[:2000] for s in body.steps if s.strip()],
+        image=image if body.cover and image and image.startswith("https://") else None,
+        links=[],
+    )
+    recipe = await repo.create_recipe(draft)
+    drafts.pop(draft_id)  # only now, so a failed save can be tried again
+    links = [(i.zutat.strip(), i.emoji, i.aisle) for i in body.ingredients if i.link and i.zutat.strip()]
+    not_created = await repo.link_ingredients(recipe.id, links) if links else []
+    try:
+        recipe = await find_recipe(repo, recipe.id)
+    except HTTPException:
+        pass  # Notion lists a new page with a delay now and then; the created page is enough
+    return {"recipe": recipe_json(recipe), "not_created": not_created}
+
+
+class CoverPhoto(UploadedPhoto):
+    pass
+
+
+@router.put("/recipes/{recipe_id}/cover")
+async def set_cover(recipe_id: str, body: CoverPhoto, request: Request) -> dict[str, Any]:
+    """An own photo as the cover of the recipe page in Notion."""
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    data, mime = decode_photo(body)
+    await repo.set_cover_photo(recipe.id, data, mime)
     return recipe_json(await find_recipe(repo, recipe.id))

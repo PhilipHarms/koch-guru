@@ -10,6 +10,7 @@ import { WeekRoute } from './pages/Week';
 import { TodayRoute } from './pages/Today';
 import { ShoppingRoute } from './pages/Shopping';
 import { CookRoute } from './pages/Cook';
+import { ImportRoute } from './pages/Import';
 import { PlaceholderPage } from './pages/Placeholder';
 import { BrandScreen } from './pages/Status';
 
@@ -55,6 +56,10 @@ export function App() {
     setState((s) => (s.kind === 'ready' ? { ...s, recipes: s.recipes.map((r) => (r.id === updated.id ? updated : r)) } : s));
   }, []);
 
+  const addRecipe = useCallback((added: Recipe) => {
+    setState((s) => (s.kind === 'ready' ? { ...s, recipes: [added, ...s.recipes.filter((r) => r.id !== added.id)] } : s));
+  }, []);
+
   const weekCleared = useCallback(() => {
     setState((s) => (s.kind === 'ready' ? { ...s, recipes: s.recipes.map((r) => (r.this_week ? { ...r, this_week: false } : r)) } : s));
   }, []);
@@ -63,10 +68,10 @@ export function App() {
     () => (state.kind === 'ready'
       ? {
           me: state.me, recipes: state.recipes, weekSupported: state.weekSupported,
-          people: state.people, cookedSupported: state.cookedSupported, updateRecipe, weekCleared,
+          people: state.people, cookedSupported: state.cookedSupported, updateRecipe, addRecipe, weekCleared,
         }
       : null),
-    [state, updateRecipe, weekCleared],
+    [state, updateRecipe, addRecipe, weekCleared],
   );
 
   if (state.kind === 'loading') return <BrandScreen text="Rezepte werden geladen …" />;
@@ -83,6 +88,7 @@ export function App() {
           <Router>
             <Route path="/" component={TodayRoute} />
             <Route path="/rezepte" component={RecipesRoute} />
+            <Route path="/rezepte/neu" component={ImportRoute} />
             <Route path="/rezepte/:id" component={RecipeRoute} />
             <Route path="/rezepte/:id/kochen" component={CookRoute} />
             <Route path="/woche" component={WeekRoute} />

@@ -19,6 +19,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from koch_guru.notion_repo import RecipeRepository
+from koch_guru.services.drafts import DraftStore
 from koch_guru.web import api
 from koch_guru.web.auth import COOKIE_MAX_AGE, COOKIE_NAME, display_name, user_for_key
 
@@ -81,6 +82,7 @@ def create_app(
     app.state.http = http or httpx.AsyncClient(follow_redirects=True, timeout=20)
     app.state.llm = llm  # for recipe ideas; without it /api/suggest answers 503
     app.state.users = users
+    app.state.drafts = DraftStore()  # recipes read in by "Rezept hinzufügen", until saved
     if not users:
         log.warning("APP_USERS ist leer: Niemand kann sich in der Web-App anmelden.")
 

@@ -7,7 +7,7 @@ import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
-import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, SucheIcon } from '../components/icons';
+import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, PlusIcon, SucheIcon } from '../components/icons';
 
 type View = 'kacheln' | 'liste';
 type Sort = 'neu' | 'name' | 'bewertung' | 'gekocht';
@@ -150,7 +150,7 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
     setSelected((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
 
   return (
-    <main class="page">
+    <main class="page rezepte-mit-knopf">
       <header class="page-header">
         <h1 class="titel-seite">Rezepte</h1>
         <p class="text-klein page-summary" aria-live="polite">
@@ -218,6 +218,9 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
           {shown.map((r) => <RecipeRow recipe={r} key={r.id} />)}
         </ul>
       )}
+      <a class="kg-fab rezepte-neu" href="/rezepte/neu" aria-label="Rezept hinzufügen">
+        <PlusIcon size={28} />
+      </a>
     </main>
   );
 }
