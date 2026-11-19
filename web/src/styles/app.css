@@ -259,7 +259,6 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .kg-check input:disabled { cursor: default; }
 .einkauf .kg-check-emoji { font-family: var(--font-display); font-weight: 600; color: var(--ink-muted); }
 .einkauf .kg-check-emoji img { width: 24px; height: 24px; }
-.einkauf-filter { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 /* Neu generieren */
 .neu-generieren {
@@ -341,7 +340,6 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .kochmodus-alle-liste li.jetzt { font-weight: 700; }
 .kochmodus-alle-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .kochmodus-alle-menge { font-weight: 600; color: var(--ink-muted); }
-.einkauf-steuerung { display: flex; flex-direction: column; gap: var(--space-10); }
 .einkauf-abteilung { padding-top: var(--space-4); }
 .kochmodus-alle-icon { width: 24px; display: inline-flex; justify-content: center; }
 .kochmodus-alle-icon img { width: 20px; height: 20px; }
@@ -461,3 +459,10 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .zeile .schritt-nummer { flex-shrink: 0; margin-top: 10px; }
 .zeile-weg { flex-shrink: 0; width: 40px; height: 48px; min-width: 0; background: transparent; color: var(--ink-muted); }
 .zeilen-neu { align-self: flex-start; padding-left: 0; gap: var(--space-6); }
+
+/* Einkauf: Schon da */
+.einkauf-da-kopf { display: flex; align-items: center; gap: var(--space-10); width: 100%; min-height: var(--size-touch); padding: 0; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink); font-family: inherit; font-size: 17px; font-weight: 700; text-align: left; cursor: pointer; }
+.einkauf-da-zahl { min-width: 24px; height: 24px; padding: 0 var(--space-8); border-radius: var(--radius-pill); background: var(--surface-cream); color: var(--ink-soft); font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.einkauf-da-kopf .kg-icon { margin-left: auto; color: var(--ink-muted); transition: transform 0.2s ease; }
+.einkauf-da-kopf[aria-expanded="true"] .kg-icon { transform: rotate(180deg); }
+.einkauf-da-kopf:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
