@@ -18,10 +18,18 @@ from pydantic import BaseModel, Field
 
 from koch_guru.llm import ModelError
 from koch_guru.models import Recipe
-from koch_guru.notion_repo import RecipeRepository
-from koch_guru.page_content import fold, generated_sections, image_urls, notes_text, parse_content
+from koch_guru.notion_repo import MAX_BLOCKS, RecipeRepository, content_blocks
+from koch_guru.page_content import (
+    best_match,
+    editable_content,
+    fold,
+    generated_sections,
+    image_urls,
+    notes_text,
+    parse_content,
+)
 from koch_guru.services.drafts import DraftStore
-from koch_guru.services.generate import generate, prepare
+from koch_guru.services.generate import generate, line_name, name_ingredients, prepare
 from koch_guru.services.importer import (
     MAX_PHOTOS,
     PHOTO_TYPES,
@@ -650,3 +658,106 @@ async def set_cover(recipe_id: str, body: CoverPhoto, request: Request) -> dict[
     data, mime = decode_photo(body)
     await repo.set_cover_photo(recipe.id, data, mime)
     return recipe_json(await find_recipe(repo, recipe.id))
+
+
+# --- Bearbeiten: ingredients, steps, time and servings ---------------------------------
+
+def is_group_line(line: str) -> bool:
+    return line.rstrip().endswith(":")
+
+
+@router.get("/recipes/{recipe_id}/edit-content")
+async def get_edit_content(recipe_id: str, request: Request) -> dict[str, Any]:
+    """Ingredient lines, steps, time and servings as plain text, if the page has the sections for it."""
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    found = editable_content(await repo.page_blocks(recipe.id, refresh=True))
+    return {key: found[key] for key in ("editable", "minutes", "servings", "ingredients", "steps")}
+
+
+class IngredientLines(BaseModel):
+    ingredients: list[str] = Field(max_length=80)
+
+
+def _linked_by(lines: list[str], linked: list[str]) -> set[str]:
+    """Linked ingredients that one of the lines names."""
+    return {match for line in lines if not is_group_line(line) and (match := best_match(line_name(line), linked))}
+
+
+@router.post("/recipes/{recipe_id}/edit-content/check")
+async def check_ingredients(recipe_id: str, body: IngredientLines, request: Request) -> dict[str, Any]:
+    """Before saving: what new lines link to, and which links lose their line.
+
+    Only lines that are new compared to the page are looked at, so an ingredient left
+    unlinked on purpose (salt) is not offered again on every edit.
+    """
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    old = editable_content(await repo.page_blocks(recipe.id, refresh=True))["ingredients"]
+    lines = [" ".join(line.split()) for line in body.ingredients if line.strip()]
+    old_keys = {fold(line) for line in old}
+    new = [line for line in lines if fold(line) not in old_keys and not is_group_line(line)]
+    linked = list(recipe.ingredients)
+    named = await name_ingredients(new, request.app.state.llm, repo.ingredient_names, repo.ingredient_fields.aisles)
+    for item in named:
+        item.linked = bool(item.existing and item.existing in linked)
+    gone = _linked_by(old, linked) - _linked_by(lines, linked)
+    return {
+        "lines": [item.as_json() for item in named if not item.linked],
+        "unlink": [{"id": i, "name": n} for i, n in zip(recipe.ingredient_ids, recipe.ingredients) if n in gone],
+    }
+
+
+class ContentLink(BaseModel):
+    zutat: str = Field(min_length=1, max_length=100)
+    emoji: str | None = Field(default=None, max_length=16)
+    aisle: str | None = Field(default=None, max_length=100)
+
+
+class ContentSave(BaseModel):
+    minutes: int | None = Field(default=None, ge=0, le=10_000)
+    servings: str | None = Field(default=None, max_length=100)
+    ingredients: list[str] = Field(max_length=80)
+    steps: list[str] = Field(max_length=60)
+    link: list[ContentLink] = Field(default_factory=list, max_length=80)
+    unlink: list[str] = Field(default_factory=list, max_length=100)  # ingredient ids
+
+
+@router.put("/recipes/{recipe_id}/content")
+async def save_content(recipe_id: str, body: ContentSave, request: Request) -> dict[str, Any]:
+    """Write edited ingredients, steps, time and servings in place of the old ones."""
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    blocks = await repo.page_blocks(recipe.id, refresh=True)
+    current = editable_content(blocks)
+    if not current["editable"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Zutaten und Schritte stehen hier nicht unter „Zutaten“ und „Zubereitung“. Bitte in Notion ändern.",
+        )
+    sections = generated_sections(blocks)
+    servings = " ".join((body.servings or "").split()) or None
+    url = web_link(recipe.url)
+    new_blocks = content_blocks(
+        ingredients=[" ".join(i.split())[:2000] for i in body.ingredients if i.strip()],
+        steps=[" ".join(s.split())[:2000] for s in body.steps if s.strip()],
+        minutes=body.minutes or None,
+        servings=servings,
+        url=url,
+        source=", ".join(recipe.origin) or current["source"],
+        # Only where there was an info line, or there is something to put in it now.
+        info=sections["info"] or bool(body.minutes or servings),
+    )
+    if len(new_blocks) > MAX_BLOCKS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="So viele Zeilen nimmt Notion auf einmal nicht an."
+        )
+    linked = {i.replace("-", ""): i for i in recipe.ingredient_ids}
+    not_created = await repo.save_content(
+        recipe.id,
+        blocks=new_blocks,
+        replace_ids=sections["ids"],
+        link=[(item.zutat.strip(), item.emoji, item.aisle) for item in body.link if item.zutat.strip()],
+        unlink_ids=[linked[key] for i in body.unlink if (key := i.replace("-", "")) in linked],
+    )
+    return {"recipe": recipe_json(await find_recipe(repo, recipe.id)), "not_created": not_created}

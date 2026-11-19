@@ -448,3 +448,15 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .bearbeiten-neu .kg-search { flex: 1; }
 .bearbeiten-neu .kg-iconbtn { flex-shrink: 0; background: var(--surface-cream); }
 .bearbeiten-neu .kg-iconbtn:disabled { opacity: 0.4; }
+.bearbeiten-zwei { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
+.bearbeiten-klein { display: flex; flex-direction: column; gap: var(--space-6); }
+.zeilen { display: flex; flex-direction: column; gap: var(--space-8); }
+.zeilen-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-8); }
+.zeile { display: flex; align-items: flex-start; gap: var(--space-8); }
+.zeile input, .zeile textarea { flex: 1; min-width: 0; box-sizing: border-box; border: 1.5px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 16px; line-height: 1.45; }
+.zeile input { height: 48px; padding: 0 var(--space-14); }
+.zeile textarea { min-height: 48px; padding: 11px var(--space-14); resize: none; overflow: hidden; }
+.zeile input:focus, .zeile textarea:focus { outline: none; border-color: var(--brand); }
+.zeile .schritt-nummer { flex-shrink: 0; margin-top: 10px; }
+.zeile-weg { flex-shrink: 0; width: 40px; height: 48px; min-width: 0; background: transparent; color: var(--ink-muted); }
+.zeilen-neu { align-self: flex-start; padding-left: 0; gap: var(--space-6); }

@@ -99,11 +99,12 @@ class GeneratedIngredient:
     linked: bool = False  # already linked to this recipe
     group: bool = False  # a heading like "Für die Salsa:", never linked
     aisle: str | None = None  # supermarket aisle for a new ingredient, from the tags in Notion
+    unsure: bool = False  # no name from the model; offered, but not preselected
 
     @property
     def include(self) -> bool:
         """Preselected in the preview: everything except what is always at home."""
-        return not self.group and (self.linked or not self.staple)
+        return not self.group and not self.unsure and (self.linked or not self.staple)
 
     def as_json(self) -> dict[str, Any]:
         if self.group:
@@ -310,3 +311,86 @@ async def generate(
     if draft.source in ("notes",):
         result.source, result.url, result.image = "Notizen", None, None
     return result
+
+
+# --- Ingredients typed in the edit screen ----------------------------------------------
+
+NAME_PROMPT = """\
+Zu jeder Zutatenzeile aus einem Rezept nennst du die eigentliche Zutat, damit sie mit der \
+Zutaten-Datenbank eines deutschen Haushalts verknüpft werden kann. Die Zeilen selbst änderst du nicht.
+
+1. `zutat`: die Zutat ohne Menge, Größe und Zubereitung: aus „2 EL dunkle Sojasauce“ wird \
+„Sojasauce“, aus „1 große Zwiebel, fein gehackt“ wird „Zwiebel“. Gibt es sie in <vorhandene_zutaten>, \
+schreib sie exakt so wie dort. Sonst einen kurzen, üblichen deutschen Namen.
+2. `emoji`: genau ein Emoji, das die Zutat zeigt.
+3. `immer_da`: true für Dinge, die immer im Haus sind und nicht eingekauft werden (Salz, Pfeffer, Wasser).
+4. `abteilung`: die Abteilung im Supermarkt aus <abteilungen>, exakt so geschrieben, oder leer.
+Gib die Zeilen in derselben Reihenfolge zurück, `zeile` jeweils unverändert.
+"""
+
+
+class NamedIngredient(BaseModel):
+    zeile: str = Field(description="Die Zeile, unverändert")
+    zutat: str = Field(description="Die eigentliche Zutat ohne Menge und Zubereitung")
+    emoji: str = Field(description="Genau ein Emoji für die Zutat")
+    immer_da: bool = Field(description="true für Salz, Pfeffer, Wasser und Ähnliches")
+    abteilung: str = Field(default="", description="Abteilung im Supermarkt aus der Liste, oder leer")
+
+
+class NamedIngredients(BaseModel):
+    zutaten: list[NamedIngredient]
+
+
+def line_name(line: str) -> str:
+    """The words after the amount: "200 g rote Linsen" -> "rote Linsen"."""
+    match = AMOUNT.match(line)
+    return (match.group(2) if match else line).strip()
+
+
+ALWAYS_AT_HOME = {"salz", "pfeffer", "wasser", "salz und pfeffer", "meersalz"}
+
+
+async def name_ingredients(
+    lines: Sequence[str], llm: StructuredLLM | None, known: list[str], aisles: Sequence[str] = ()
+) -> list[GeneratedIngredient]:
+    """For new ingredient lines: which ingredient of the database each means, or a name for a new one.
+
+    The model names them and says what is always at home. Without a model, or if it
+    fails, lines are matched by their words; the rest stay unlinked (not preselected).
+    """
+    if not lines:
+        return []
+    named: list[NamedIngredient] = []
+    if llm is not None:
+        request = "<zeilen>\n" + "\n".join(lines) + "\n</zeilen>\n\n"
+        request += "<vorhandene_zutaten>\n" + "\n".join(known) + "\n</vorhandene_zutaten>"
+        if aisles:
+            request += "\n\n<abteilungen>\n" + "\n".join(aisles) + "\n</abteilungen>"
+        try:
+            answer = await llm.structured(
+                system=NAME_PROMPT, messages=[{"role": "user", "content": request}], output_type=NamedIngredients
+            )
+            named = answer.zutaten
+        except Exception as exc:  # the lines are saved anyway, just matched by their words
+            log.warning("Zutaten nicht benannt: %r", exc)
+    by_line = {fold(n.zeile.strip()): n for n in named}
+    items = []
+    for index, line in enumerate(lines):
+        item = by_line.get(fold(line.strip())) or (named[index] if len(named) == len(lines) else None)
+        if item is not None and item.zutat.strip():
+            zutat = item.zutat.strip()
+            existing = best_match(zutat, known) or best_match(line_name(line), known)
+            items.append(GeneratedIngredient(
+                line=line, zutat=existing or zutat, emoji=clean_emoji(item.emoji), staple=item.immer_da,
+                existing=existing,
+                aisle=item.abteilung.strip() if item.abteilung.strip() in aisles and not existing else None,
+            ))
+            continue
+        existing = best_match(line_name(line), known)
+        if existing:
+            staple = fold(" ".join(existing.split())) in ALWAYS_AT_HOME
+            items.append(GeneratedIngredient(line=line, zutat=existing, emoji=None, staple=staple, existing=existing))
+        else:
+            items.append(GeneratedIngredient(
+                line=line, zutat=line_name(line), emoji=None, staple=False, existing=None, unsure=True))
+    return items
