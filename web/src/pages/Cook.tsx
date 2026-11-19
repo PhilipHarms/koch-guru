@@ -146,7 +146,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
   const [timers, setTimers] = useState<Record<number, Timer>>(saved?.timers ?? {});
   const [now, setNow] = useState(Date.now());
   const [showAll, setShowAll] = useState(false);
-  const awake = useScreenAwake();
+  useScreenAwake();
   const textRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -297,8 +297,6 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
             </button>
           </div>
         )}
-
-        {awake && <p class="kochmodus-wach meta muted">Der Bildschirm bleibt an, solange der Kochmodus offen ist.</p>}
       </main>
 
       <footer class="kochmodus-fuss">

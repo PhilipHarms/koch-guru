@@ -320,7 +320,6 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .kochmodus-timer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .kochmodus-timer-zeit { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kochmodus-stopp { background: var(--ink); color: var(--surface); }
-.kochmodus-wach { margin: 0; }
 .kochmodus-fuss {
   position: sticky; bottom: 0; display: flex; gap: var(--space-12);
   padding: var(--space-16) var(--space-20) var(--space-28); background: var(--surface-warm);
