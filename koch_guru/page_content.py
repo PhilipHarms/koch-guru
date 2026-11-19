@@ -182,11 +182,47 @@ def generated_sections(blocks: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if kind == "paragraph" and not text:
             continue  # empty lines do not end a section
         section = None
-        if kind == "paragraph" and block_id and (
-            ("Quelle:" in text and text.startswith(("⏱", "🍽", "Quelle:"))) or text.startswith(SHORTENED_NOTE)
-        ):
+        if kind == "paragraph" and block_id and (_is_info(text) or text.startswith(SHORTENED_NOTE)):
             found["ids"].append(block_id)
-            found["info"] = found["info"] or "Quelle:" in text
+            found["info"] = found["info"] or _is_info(text)
+    return found
+
+
+def _is_info(text: str) -> bool:
+    """The line "⏱ 30 Min · 🍽 4 Portionen · Quelle: …" that KochGuru writes above the ingredients."""
+    return ("Quelle:" in text and text.startswith(("⏱", "🍽", "Quelle:"))) or bool(
+        text.startswith(("⏱", "🍽")) and _info_line(text)
+    )
+
+
+def editable_content(blocks: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """The parts of a page the edit screen can change, as plain lines.
+
+    Those are the list items under the headings "Zutaten" and "Zubereitung" and the
+    info line, the same blocks `generated_sections` finds for replacing. A page without
+    these headings is not `editable`; its content is changed in Notion.
+    """
+    found: dict[str, Any] = {
+        "editable": False, "minutes": None, "servings": None, "source": None, "ingredients": [], "steps": [],
+    }
+    section: str | None = None
+    for block in blocks:
+        kind = block.get("type", "")
+        text = _plain(block)
+        if kind.startswith("heading_"):
+            section = GENERATED_HEADINGS.get(text.rstrip(":").strip().casefold())
+            found["editable"] = found["editable"] or bool(section)
+            continue
+        if section and kind in ("bulleted_list_item", "numbered_list_item"):
+            found[section].extend(_lines(block))
+            continue
+        if kind == "paragraph" and not text:
+            continue
+        section = None
+        if kind == "paragraph" and _is_info(text) and found["minutes"] is None and found["servings"] is None:
+            found["minutes"], found["servings"] = _info_line(text) or (None, None)
+            if "Quelle:" in text:
+                found["source"] = text.split("Quelle:", 1)[1].strip() or None
     return found
 
 
@@ -568,7 +604,13 @@ def parse_content(
             section, guess = None, "off"
             rest.extend(_simple(block))
             continue
-        if index == 0 and kind == "paragraph" and (info := _info_line(_plain(block))):
+        if (
+            kind == "paragraph"
+            and minutes is None and servings is None and not (items or steps)
+            and (index == 0 or _plain(block).startswith(("⏱", "🍽")))
+            and (info := _info_line(_plain(block)))
+        ):
+            # Usually the first line; after an edit it may stand above the ingredients instead.
             minutes, servings = info
             continue
         if kind == "paragraph" and servings is None and not (items or steps or rest):

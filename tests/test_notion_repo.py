@@ -746,3 +746,28 @@ async def test_editable_fields_follow_the_schema():
     fields = repo.editable_fields
     assert fields["tags"] == {"options": ["Veggie", "Winter"], "multiple": True}
     assert fields["link"] is True and fields["origin"]["multiple"] is True
+
+
+async def test_save_content_replaces_the_sections_and_fixes_links():
+    from koch_guru.notion_repo import content_blocks
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    blocks = content_blocks(ingredients=["1 Süßkartoffel"], steps=["Backen."], minutes=40)
+    missing = await repo.save_content(target.id, blocks=blocks, replace_ids=["old-1", "old-2"],
+                                      link=[("Süßkartoffel", "🍠", None)], unlink_ids=["ing-2"])
+    assert missing == []
+    (page_id, children), = fake.appended
+    assert page_id == target.id and children == blocks and fake.appended_after == ["old-1"]
+    assert fake.deleted == ["old-1", "old-2"]
+    relation = fake.updates[-1][1]["properties"]["Ingredients"]["relation"]
+    assert {r["id"] for r in relation} == {"ing-1", "ing-3"}  # Süßkartoffel added, Kurkuma (ing-2) removed
+
+
+async def test_save_content_without_link_changes_only_writes_blocks():
+    from koch_guru.notion_repo import content_blocks
+    fake = FakeNotion(total=1)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    await repo.save_content(target.id, blocks=content_blocks(ingredients=["1 Ei"], steps=[]), replace_ids=["x"])
+    assert fake.updates == [] and fake.deleted == ["x"]

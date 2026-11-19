@@ -176,3 +176,46 @@ async def test_link_without_photo_in_the_recipe_data_uses_the_page_preview():
         lambda r: httpx.Response(200, text=page, headers={"content-type": "text/html"})))
     draft = await read_from_link("https://example.com/dal", http, llm=None)
     assert draft.image == "https://example.com/dal.jpg"
+
+
+class NamingLLM:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.requests = []
+
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.services.generate import NamedIngredient, NamedIngredients
+        self.requests.append(messages[0]["content"])
+        if self.fail:
+            raise RuntimeError("down")
+        return NamedIngredients(zutaten=[
+            NamedIngredient(zeile="200 g rote Linsen", zutat="Rote Linsen", emoji="🫘", immer_da=False),
+            NamedIngredient(zeile="1 Bund glatte Petersilie", zutat="Petersilie", emoji="🌿", immer_da=False,
+                            abteilung="Gemüse"),
+            NamedIngredient(zeile="Salz nach Geschmack", zutat="Salz", emoji="🧂", immer_da=True),
+            NamedIngredient(zeile="2 EL Tahini", zutat="Tahin", emoji="🥣", immer_da=False, abteilung="Quatsch"),
+        ])
+
+
+async def test_new_ingredient_lines_are_named_for_linking():
+    from koch_guru.services.generate import name_ingredients
+    llm = NamingLLM()
+    lines = ["200 g rote Linsen", "1 Bund glatte Petersilie", "Salz nach Geschmack", "2 EL Tahini"]
+    items = await name_ingredients(lines, llm, known=["Rote Linsen", "Salz", "Tahin"], aisles=["Gemüse"])
+    assert [(i.line, i.zutat, i.existing, i.include, i.aisle) for i in items] == [
+        ("200 g rote Linsen", "Rote Linsen", "Rote Linsen", True, None),
+        ("1 Bund glatte Petersilie", "Petersilie", None, True, "Gemüse"),
+        ("Salz nach Geschmack", "Salz", "Salz", False, None),  # always at home
+        ("2 EL Tahini", "Tahin", "Tahin", True, None),
+    ]
+    assert "<vorhandene_zutaten>" in llm.requests[0]
+
+
+async def test_naming_without_model_matches_by_words():
+    from koch_guru.services.generate import name_ingredients
+    for llm in (None, NamingLLM(fail=True)):
+        parsley, salt, lentils = await name_ingredients(
+            ["1 Bund Petersilie", "Salz", "200 g rote Linsen"], llm, known=["Salz", "Rote Linsen"])
+        assert (parsley.zutat, parsley.include, parsley.as_json()["status"]) == ("Petersilie", False, "new")
+        assert (salt.existing, salt.include) == ("Salz", False)  # always at home
+        assert (lentils.existing, lentils.include) == ("Rote Linsen", True)

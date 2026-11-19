@@ -78,6 +78,9 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         <button type="button" class="kg-iconbtn kg-iconbtn-schwebend rezept-zurueck" aria-label="Zurück" onClick={goBack}>
           <ZurueckIcon />
         </button>
+        <a class="kg-iconbtn kg-iconbtn-schwebend rezept-bearbeiten" href={`${recipePath(recipe)}/bearbeiten`} aria-label="Bearbeiten">
+          <StiftIcon size={20} />
+        </a>
       </div>
 
       <div class="rezept-inhalt">
@@ -126,9 +129,6 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
             )}
             <a class="rezept-link" href={recipe.notion_url} target="_blank" rel="noopener noreferrer">
               <ExternIcon size={18} />In Notion
-            </a>
-            <a class="rezept-link" href={`${recipePath(recipe)}/bearbeiten`}>
-              <StiftIcon size={18} />Bearbeiten
             </a>
           </div>
         </div>

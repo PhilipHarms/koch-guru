@@ -1,8 +1,9 @@
 """Turning Notion page content into ingredients, steps and simple blocks for the recipe screen."""
 
-from koch_guru.notion_repo import draft_blocks
+from koch_guru.notion_repo import content_blocks, draft_blocks
 from koch_guru.page_content import (
     IconFinder,
+    editable_content,
     generated_sections,
     german_amount,
     german_temperatures,
@@ -407,3 +408,53 @@ def test_a_step_that_names_a_group_uses_only_that_group():
     assert ingredients_in_step("Die Chilischote hacken.", items, context="Guacamole") == [7]
     # A named group without the ingredient does not hide it.
     assert ingredients_in_step("Tortillas zur Guacamole reichen.", items) == [1]
+
+
+def with_ids(blocks):
+    for n, b in enumerate(blocks):
+        b["id"] = f"b{n}"
+    return blocks
+
+
+def test_editable_content_reads_lines_under_zutaten_and_zubereitung():
+    blocks = with_ids([
+        block("paragraph", "⏱ 30 Min · 🍽 4 Portionen · Quelle: Foto"),
+        block("paragraph", "Von Oma."),
+        block("heading_2", "Zutaten"),
+        block("bulleted_list_item", "Für den Teig:"),
+        block("bulleted_list_item", "200 g Mehl", children=[block("bulleted_list_item", "1 Prise Salz")]),
+        block("paragraph", ""),
+        block("heading_2", "Zubereitung:"),
+        block("numbered_list_item", "Alles verkneten."),
+        block("heading_2", "Notizen"),
+        block("bulleted_list_item", "Nicht zu lange backen"),
+    ])
+    found = editable_content(blocks)
+    assert found == {"editable": True, "minutes": 30, "servings": "4 Portionen", "source": "Foto",
+                     "ingredients": ["Für den Teig:", "200 g Mehl", "1 Prise Salz"], "steps": ["Alles verkneten."]}
+
+
+def test_a_page_without_the_headings_is_not_editable():
+    blocks = with_ids([block("heading_2", "Ingredients"), block("bulleted_list_item", "200 g flour"),
+                       block("paragraph", "Mix everything.")])
+    assert editable_content(blocks)["editable"] is False
+
+
+def test_written_content_reads_back_and_is_found_for_the_next_edit():
+    written = content_blocks(ingredients=["Für den Teig:", "200 g Mehl"], steps=["Kneten."], minutes=20,
+                             servings="2", url="https://www.example.com/brot")
+    blocks = with_ids([block("paragraph", "Notiz oben")] + as_read(written))
+    content = parse_content(blocks)
+    assert (content["minutes"], content["servings"]) == (20, "2")  # info line below a note is still read
+    assert [i.get("name") or i.get("group") for i in content["ingredients"]] == ["Für den Teig", "Mehl"]
+    assert generated_sections(blocks)["ids"] == ["b1", "b2", "b3", "b4", "b5", "b6"]
+    found = editable_content(blocks)
+    assert (found["minutes"], found["servings"], found["source"]) == (20, "2", "example.com")
+
+
+def test_info_line_without_source_is_written_and_found():
+    written = content_blocks(ingredients=["1 Ei"], steps=[], minutes=None, servings="1 Portion", info=True)
+    assert [b["type"] for b in written] == ["paragraph", "heading_2", "bulleted_list_item"]
+    blocks = with_ids(as_read(written))
+    assert generated_sections(blocks)["info"] is True
+    assert content_blocks(ingredients=[], steps=[], info=False) == [written[1]]  # the heading stays

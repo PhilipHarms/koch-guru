@@ -14,7 +14,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from notion_client import APIErrorCode, APIResponseError, AsyncClient
 from notion_client.helpers import async_collect_paginated_api, extract_notion_id
@@ -806,17 +806,7 @@ class RecipeRepository:
         if new_link and self._mapping.link:
             # First, so a failure leaves the page as it was.
             await self._client.pages.update(page_id=page_id, properties={self._mapping.link: {"url": new_link}})
-        if replace_ids:
-            await self._client.blocks.children.append(
-                block_id=page_id, children=draft_blocks(draft), after=replace_ids[0]
-            )
-            for block_id in replace_ids:
-                try:
-                    await self._client.blocks.delete(block_id=block_id)
-                except APIResponseError as exc:  # a leftover line is better than a failed save
-                    log.warning("Alter Block %s nicht gelöscht: %s", block_id, exc.code)
-        else:
-            await self._client.blocks.children.append(block_id=page_id, children=draft_blocks(draft))
+        await self._replace_blocks(page_id, draft_blocks(draft), replace_ids)
         if cover:
             try:
                 await self._client.pages.update(page_id=page_id, cover={"type": "external", "external": {"url": cover}})
@@ -824,6 +814,38 @@ class RecipeRepository:
                 log.warning("Titelbild nicht gesetzt: %s", exc.code)
 
         not_created = await self.link_ingredients(page_id, link, unlink_ids=unlink_ids)
+        self._content_cache.pop(page_id, None)
+        self._cache = None  # reload ingredients and links on next access
+        return not_created
+
+    async def _replace_blocks(self, page_id: str, blocks: list[dict[str, Any]], replace_ids: Sequence[str]) -> None:
+        """Put `blocks` where the first of `replace_ids` stands and delete those; without them, append."""
+        if not replace_ids:
+            await self._client.blocks.children.append(block_id=page_id, children=blocks)
+            return
+        if blocks:
+            await self._client.blocks.children.append(block_id=page_id, children=blocks, after=replace_ids[0])
+        for block_id in replace_ids:
+            try:
+                await self._client.blocks.delete(block_id=block_id)
+            except APIResponseError as exc:  # a leftover line is better than a failed save
+                log.warning("Alter Block %s nicht gelöscht: %s", block_id, exc.code)
+
+    async def save_content(
+        self,
+        page_id: str,
+        *,
+        blocks: list[dict[str, Any]],
+        replace_ids: Sequence[str],
+        link: Sequence[tuple[str, ...]] = (),
+        unlink_ids: Sequence[str] = (),
+    ) -> list[str]:
+        """Write edited ingredients and steps in place of the old ones, then fix the links.
+
+        Returns the names that could not be created or linked.
+        """
+        await self._replace_blocks(page_id, blocks, replace_ids)
+        not_created = await self.link_ingredients(page_id, link, unlink_ids=unlink_ids) if link or unlink_ids else []
         self._content_cache.pop(page_id, None)
         self._cache = None  # reload ingredients and links on next access
         return not_created
@@ -1055,6 +1077,36 @@ def draft_blocks(draft: RecipeDraft, photo_upload_ids: list[str] | None = None) 
         note = "Gekürzt, der Rest steht " + ("in der Quelle." if draft.url else "auf dem Foto.")
         blocks = blocks[: room - 1] + [_block("paragraph", _text(note, draft.url or None))]
     return blocks + tail
+
+
+def content_blocks(
+    *,
+    ingredients: Sequence[str],
+    steps: Sequence[str],
+    minutes: int | None = None,
+    servings: str | None = None,
+    url: str | None = None,
+    source: str | None = None,
+    info: bool = True,
+) -> list[dict[str, Any]]:
+    """Blocks for an edited recipe: info line (if `info`), "Zutaten" and "Zubereitung".
+
+    The "Zutaten" heading is kept even without lines, so the page stays editable.
+    """
+    blocks = []
+    parts = ([f"⏱ {minutes} Min"] if minutes else []) + ([f"🍽 {servings}"] if servings else [])
+    if info and url:
+        site = urlsplit(url).netloc.removeprefix("www.")
+        blocks.append(_block("paragraph", _text(" · ".join([*parts, "Quelle: "])), _text(site, url)))
+    elif info and (parts or source):
+        blocks.append(_block("paragraph", _text(" · ".join(parts + ([f"Quelle: {source}"] if source else [])))))
+    if ingredients or not steps:
+        blocks.append(_block("heading_2", _text("Zutaten")))
+        blocks += [_block("bulleted_list_item", _text(i)) for i in ingredients]
+    if steps:
+        blocks.append(_block("heading_2", _text("Zubereitung")))
+        blocks += [_block("numbered_list_item", _text(s)) for s in steps]
+    return blocks
 
 
 def draft_properties(draft: RecipeDraft, mapping: PropertyMapping) -> dict[str, Any]:

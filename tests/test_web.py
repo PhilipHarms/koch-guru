@@ -755,3 +755,90 @@ def test_fields_and_remove_cover():
     assert c.delete(f"/api/recipes/{DAL_ID}/cover").json()["image"] is None
     assert repo.removed == [DAL_ID]
     assert client(repo).get("/api/recipe-fields").status_code == 401
+
+
+# --- Bearbeiten: Inhalt -------------------------------------------------------------------
+
+class ContentRepo(EditRepo):
+    def __init__(self):
+        super().__init__()
+        self.ingredient_names = ["Kürbis", "Linsen", "Salz", "Koriander"]
+        self.content_saves = []
+
+    async def save_content(self, page_id, *, blocks, replace_ids, link=(), unlink_ids=()):
+        self.content_saves.append({"blocks": blocks, "replace_ids": list(replace_ids), "link": list(link),
+                                   "unlink_ids": list(unlink_ids)})
+        return [name for name, *_ in link if name == "Unbekannt"]
+
+
+class NamingWebLLM:
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.services.generate import NamedIngredient, NamedIngredients
+        return NamedIngredients(zutaten=[
+            NamedIngredient(zeile="1 Bund Koriander", zutat="Koriander", emoji="🌿", immer_da=False),
+            NamedIngredient(zeile="Salz", zutat="Salz", emoji="🧂", immer_da=True),
+        ])
+
+
+def test_edit_content_shows_the_editable_lines():
+    data = signed_in(ContentRepo()).get(f"/api/recipes/{DAL_ID}/edit-content").json()
+    assert data == {"editable": True, "minutes": None, "servings": None,
+                    "ingredients": ["500 g Kürbis"], "steps": ["Kochen."]}
+
+
+def test_check_offers_new_lines_and_links_without_a_line():
+    c = signed_in(ContentRepo(), llm=NamingWebLLM())
+    data = c.post(f"/api/recipes/{DAL_ID}/edit-content/check",
+                  json={"ingredients": ["1 Bund Koriander", "Salz", "Für oben:"]}).json()
+    assert [(i["line"], i["zutat"], i["status"], i["include"]) for i in data["lines"]] == [
+        ("1 Bund Koriander", "Koriander", "existing", True), ("Salz", "Salz", "existing", False),
+    ]
+    # "500 g Kürbis" is gone: its link is offered for removal. Linsen never had a line here.
+    assert data["unlink"] == [{"id": "i-kuerbis", "name": "Kürbis"}]
+
+
+def test_check_ignores_unchanged_and_already_linked_lines():
+    c = signed_in(ContentRepo(), llm=NamingWebLLM())
+    data = c.post(f"/api/recipes/{DAL_ID}/edit-content/check", json={"ingredients": ["500 g Kürbis", "1 Linse"]}).json()
+    assert data == {"lines": [], "unlink": []}
+
+
+def test_save_content_rewrites_the_sections():
+    repo = ContentRepo()
+    c = signed_in(repo)
+    body = {"minutes": 25, "servings": " 2  Portionen ", "ingredients": ["500 g Kürbis", " ", "1 Bund Koriander"],
+            "steps": ["Kürbis würfeln.", "Kochen."], "link": [{"zutat": "Koriander", "emoji": "🌿"}],
+            "unlink": ["i-linsen", "i-fremd"]}
+    saved = c.put(f"/api/recipes/{DAL_ID}/content", json=body).json()
+    assert saved["recipe"]["id"] == DAL_ID and saved["not_created"] == []
+    (call,) = repo.content_saves
+    assert call["replace_ids"] == ["b1", "b2", "b3", "b4"]
+    assert call["link"] == [("Koriander", "🌿", None)] and call["unlink_ids"] == ["i-linsen"]
+    texts = [(b["type"], "".join(t["text"]["content"] for t in b[b["type"]]["rich_text"])) for b in call["blocks"]]
+    assert texts == [
+        ("paragraph", "⏱ 25 Min · 🍽 2 Portionen · Quelle: example.com"),
+        ("heading_2", "Zutaten"), ("bulleted_list_item", "500 g Kürbis"), ("bulleted_list_item", "1 Bund Koriander"),
+        ("heading_2", "Zubereitung"), ("numbered_list_item", "Kürbis würfeln."), ("numbered_list_item", "Kochen."),
+    ]
+
+
+def test_save_content_without_info_writes_no_info_line():
+    repo = ContentRepo()
+    signed_in(repo).put(f"/api/recipes/{DAL_ID}/content", json={"ingredients": ["1 Ei"], "steps": []})
+    assert [b["type"] for b in repo.content_saves[0]["blocks"]] == ["heading_2", "bulleted_list_item"]
+
+
+def test_content_of_a_free_page_is_not_edited():
+    class FreePage(ContentRepo):
+        async def page_blocks(self, page_id, *, refresh=False):
+            return [{"id": "x", "type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Alles in einem Absatz."}]}}]
+    c = signed_in(FreePage())
+    assert c.get(f"/api/recipes/{DAL_ID}/edit-content").json()["editable"] is False
+    answer = c.put(f"/api/recipes/{DAL_ID}/content", json={"ingredients": ["1 Ei"], "steps": []})
+    assert answer.status_code == 409 and "Notion" in answer.json()["detail"]
+
+
+def test_too_many_lines_are_refused():
+    c = signed_in(ContentRepo())
+    body = {"ingredients": [f"{n} g Mehl" for n in range(1, 61)], "steps": [f"Schritt {n}." for n in range(1, 50)]}
+    assert c.put(f"/api/recipes/{DAL_ID}/content", json=body).status_code == 422

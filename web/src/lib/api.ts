@@ -133,6 +133,24 @@ export type ChoiceField = { options: string[]; multiple: boolean } | null;
 export type RecipeFields = { tags: ChoiceField; origin: ChoiceField; link: boolean };
 export type RecipeChanges = Partial<{ name: string; emoji: string | null; tags: string[]; origin: string[]; link: string | null }>;
 
+/** Ingredients and steps as plain lines, if the page has "Zutaten" and "Zubereitung". */
+export type EditContent = {
+  editable: boolean;
+  minutes: number | null;
+  servings: string | null;
+  ingredients: string[];
+  steps: string[];
+};
+export type IngredientCheck = { lines: GeneratedIngredient[]; unlink: { id: string; name: string }[] };
+export type ContentSave = {
+  minutes: number | null;
+  servings: string | null;
+  ingredients: string[];
+  steps: string[];
+  link: { zutat: string; emoji: string | null; aisle: string | null }[];
+  unlink: string[];
+};
+
 export type RecipeList = {
   recipes: Recipe[];
   week_supported: boolean;
@@ -215,6 +233,17 @@ export const api = {
   saveImport: (draftId: string, body: ImportSave) =>
     request<{ recipe: Recipe; not_created: string[] }>(`/api/import/${encodeURIComponent(draftId)}/save`, {
       method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  editContent: (id: string) => request<EditContent>(`/api/recipes/${encodeURIComponent(id)}/edit-content`),
+  checkIngredients: (id: string, ingredients: string[]) =>
+    request<IngredientCheck>(`/api/recipes/${encodeURIComponent(id)}/edit-content/check`, {
+      method: 'POST',
+      body: JSON.stringify({ ingredients }),
+    }),
+  saveContent: (id: string, body: ContentSave) =>
+    request<{ recipe: Recipe; not_created: string[] }>(`/api/recipes/${encodeURIComponent(id)}/content`, {
+      method: 'PUT',
       body: JSON.stringify(body),
     }),
   recipeFields: () => request<RecipeFields>('/api/recipe-fields'),
