@@ -128,6 +128,11 @@ export type ImportSave = {
   cover: boolean;
 };
 
+/** A field like Tags or Kochbuch: its options in Notion, and whether several can be chosen. */
+export type ChoiceField = { options: string[]; multiple: boolean } | null;
+export type RecipeFields = { tags: ChoiceField; origin: ChoiceField; link: boolean };
+export type RecipeChanges = Partial<{ name: string; emoji: string | null; tags: string[]; origin: string[]; link: string | null }>;
+
 export type RecipeList = {
   recipes: Recipe[];
   week_supported: boolean;
@@ -212,6 +217,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  recipeFields: () => request<RecipeFields>('/api/recipe-fields'),
+  updateRecipe: (id: string, changes: RecipeChanges) =>
+    request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  removeCover: (id: string) => request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/cover`, { method: 'DELETE' }),
   setCover: (id: string, photo: PhotoUpload) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/cover`, { method: 'PUT', body: JSON.stringify(photo) }),
   shoppingList: () => request<ShoppingList>('/api/shopping-list'),

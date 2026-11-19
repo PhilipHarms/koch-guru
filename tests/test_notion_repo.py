@@ -231,7 +231,11 @@ class FakeNotion:
             page_id = path.rsplit("/", 1)[1]
             body = json.loads(request.content)
             self.updates.append((page_id, body))
-            answer = {"object": "page", "id": page_id, "properties": {}}
+            # Like Notion: the updated page; here only with the fields that were sent.
+            answer = {"object": "page", "id": page_id, "properties": {
+                name: {"type": next(iter(value)), **value} for name, value in (body.get("properties") or {}).items()}}
+            if "icon" in body:
+                answer["icon"] = body["icon"]
             if (body.get("cover") or {}).get("type") == "file_upload":
                 upload = body["cover"]["file_upload"]["id"]
                 answer["cover"] = {"type": "file", "file": {"url": f"https://files.notion.so/{upload}.jpg?X-Amz-Signature=1"}}
@@ -693,3 +697,52 @@ async def test_own_photo_becomes_the_cover():
     assert updated.cover == "https://files.notion.so/fu-1.jpg?X-Amz-Signature=1"
     cached = next(r for r in await repo.list_recipes() if r.id == target.id)
     assert cached.cover == updated.cover and fake.query_calls == 1  # no reload needed
+
+
+async def test_edit_name_emoji_tags_origin_and_link():
+    fake = FakeNotion(total=3)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    updated = await repo.update_details(
+        target.id, name="Kürbis-Dal", emoji="🍛", tags=["Veggie", "Schnell"], origin=["Green Feast"], link=None)
+    page_id, body = fake.updates[-1]
+    assert page_id == target.id
+    assert body["properties"] == {
+        "Name": {"title": [{"type": "text", "text": {"content": "Kürbis-Dal"}}]},
+        "Tags": {"multi_select": [{"name": "Veggie"}, {"name": "Schnell"}]},
+        "Origin": {"multi_select": [{"name": "Green Feast"}]},
+        "Link": {"url": None},
+    }
+    assert body["icon"] == {"type": "emoji", "emoji": "🍛"}
+    assert (updated.name, updated.emoji, updated.tags, updated.origin, updated.url) == (
+        "Kürbis-Dal", "🍛", ("Veggie", "Schnell"), ("Green Feast",), None)
+    assert "Schnell" in repo.tag_options  # new option, offered from now on
+    assert fake.query_calls == 1  # the cache was updated, not reloaded
+
+
+async def test_edit_only_what_was_given_and_remove_emoji():
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    await repo.update_details(target.id, emoji=None, tags=[])
+    _, body = fake.updates[-1]
+    assert body == {"properties": {"Tags": {"multi_select": []}}, "icon": None}
+    await repo.update_details(target.id)  # nothing to change: no request
+    assert len(fake.updates) == 1
+
+
+async def test_remove_cover():
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    await repo.remove_cover(target.id)
+    assert fake.updates[-1] == (target.id, {"cover": None})
+    assert next(r for r in await repo.list_recipes() if r.id == target.id).cover is None
+
+
+async def test_editable_fields_follow_the_schema():
+    repo = make_repo(FakeNotion(total=1))
+    await repo.list_recipes()
+    fields = repo.editable_fields
+    assert fields["tags"] == {"options": ["Veggie", "Winter"], "multiple": True}
+    assert fields["link"] is True and fields["origin"]["multiple"] is True

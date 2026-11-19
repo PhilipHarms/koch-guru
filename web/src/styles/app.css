@@ -435,6 +435,16 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .import-haken { width: 72px; height: 72px; border-radius: 36px; background: var(--tag-veggie-bg); color: var(--tag-veggie-ink); display: flex; align-items: center; justify-content: center; }
 .import-nochmal { background: transparent; border: 0; color: var(--brand-text); font-weight: 700; }
 
-/* Eigenes Titelbild */
-.rezept-foto { position: absolute; top: calc(var(--space-20) + env(safe-area-inset-top)); right: var(--space-16); padding: 0 var(--space-14); gap: var(--space-6); font-size: 14px; color: var(--ink); }
-.rezept-foto-fehler { position: absolute; top: calc(76px + env(safe-area-inset-top)); left: var(--space-16); right: var(--space-16); padding: var(--space-8) var(--space-12); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-raised); }
+/* Bearbeiten */
+.bearbeiten-formular { display: flex; flex-direction: column; gap: var(--space-24); }
+.bearbeiten-feld { display: flex; flex-direction: column; gap: var(--space-10); }
+.bearbeiten-feld h2, .bearbeiten-feld label, .bearbeiten-feld p { margin: 0; }
+.bearbeiten-feld .kg-search input { font-size: 16px; }
+.bearbeiten-bild { overflow: hidden; border-radius: var(--radius-card); }
+.bearbeiten-bild img, .bearbeiten-bild .kg-bild { display: block; width: 100%; aspect-ratio: 16 / 10; height: auto; object-fit: cover; }
+.bearbeiten-emoji { width: 120px; }
+.bearbeiten-feld .bearbeiten-emoji input { font-size: 28px; text-align: center; }
+.bearbeiten-neu { display: flex; gap: var(--space-8); align-items: center; }
+.bearbeiten-neu .kg-search { flex: 1; }
+.bearbeiten-neu .kg-iconbtn { flex-shrink: 0; background: var(--surface-cream); }
+.bearbeiten-neu .kg-iconbtn:disabled { opacity: 0.4; }
