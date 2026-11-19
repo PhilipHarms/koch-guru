@@ -28,6 +28,10 @@ class PropertyNames:
     origin: str = "Origin"
     ingredients: str = "Ingredients"  # text/select property or relation to an ingredients DB
     this_week: str = "This Week?"  # checkbox
+    # In the ingredients database:
+    bought: str = "Bought"  # checkbox, ticked off on the shopping list
+    bought_on: str = "Gekauft am"  # date, created by the app if missing
+    extra: str = "Extra"  # checkbox for own items without a recipe, created by the app if missing
 
 
 @dataclass(frozen=True)
@@ -137,6 +141,9 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             origin=get("NOTION_PROP_ORIGIN", defaults.origin),
             ingredients=get("NOTION_PROP_INGREDIENTS", defaults.ingredients),
             this_week=get("NOTION_PROP_THIS_WEEK", defaults.this_week),
+            bought=get("NOTION_PROP_BOUGHT", defaults.bought),
+            bought_on=get("NOTION_PROP_BOUGHT_ON", defaults.bought_on),
+            extra=get("NOTION_PROP_EXTRA", defaults.extra),
         ),
         recipe_cache_seconds=cache_seconds,
         app_users=app_users,

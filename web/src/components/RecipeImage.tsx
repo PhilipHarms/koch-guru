@@ -3,7 +3,7 @@ import { useState } from 'preact/hooks';
 import type { Recipe } from '../lib/api';
 import { emojiOf, tileOf } from '../lib/tiles';
 
-type Size = 'karte' | 'liste' | 'woche' | 'woche-gross' | 'hero' | 'vorschlag';
+type Size = 'karte' | 'liste' | 'woche' | 'woche-gross' | 'hero' | 'vorschlag' | 'gruppe';
 
 /** Cover photo from Notion, or the emoji tile. The tile stays underneath while the photo loads or if it fails. */
 export function RecipeImage({ recipe, size, children }: { recipe: Recipe; size: Size; children?: ComponentChildren }) {

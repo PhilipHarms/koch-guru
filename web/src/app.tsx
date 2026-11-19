@@ -8,6 +8,7 @@ import { RecipesRoute } from './pages/Recipes';
 import { RecipeRoute } from './pages/Recipe';
 import { WeekRoute } from './pages/Week';
 import { TodayRoute } from './pages/Today';
+import { ShoppingRoute } from './pages/Shopping';
 import { PlaceholderPage } from './pages/Placeholder';
 import { BrandScreen } from './pages/Status';
 
@@ -19,10 +20,6 @@ type State =
 
 // Route components live outside App, so that a data update re-renders them instead of
 // mounting them anew (which would reload a recipe page and lose its state).
-function ShoppingRoute() {
-  return <PlaceholderPage title="Einkaufsliste" text="Die Einkaufsliste kommt, sobald die Zutaten-Datenbank angebunden ist." />;
-}
-
 function NotFoundRoute() {
   return <PlaceholderPage title="Nicht gefunden" text="Diese Seite gibt es nicht." />;
 }

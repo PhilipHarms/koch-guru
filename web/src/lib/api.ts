@@ -81,6 +81,26 @@ export type GeneratedSave = {
 };
 
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
+
+/** One line of the shopping list: an ingredient page in Notion. `done` is its "Bought" checkbox. */
+export type ShoppingItem = {
+  id: string;
+  name: string;
+  /** Emoji, or image address of a Notion icon. */
+  icon: string | null;
+  amount: string | null;
+  done: boolean;
+  /** Other recipes of the week that need it too. */
+  also: string[];
+};
+
+export type ShoppingList = {
+  groups: { recipe_id: string; items: ShoppingItem[] }[];
+  extras: ShoppingItem[];
+  open: number;
+  can_check: boolean;
+  can_add: boolean;
+};
 export type Me = { user: string; name: string };
 
 export class NotSignedIn extends Error {}
@@ -124,6 +144,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  shoppingList: () => request<ShoppingList>('/api/shopping-list'),
+  setBought: (id: string, bought: boolean) =>
+    request<ShoppingItem>(`/api/ingredients/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ bought }),
+    }),
+  addExtra: (name: string) =>
+    request<ShoppingItem>('/api/extras', { method: 'POST', body: JSON.stringify({ name }) }),
   clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {

@@ -19,7 +19,7 @@ from notion_client import APIErrorCode, APIResponseError, AsyncClient
 from notion_client.helpers import async_collect_paginated_api, extract_notion_id
 
 from koch_guru.config import PropertyNames
-from koch_guru.models import Recipe
+from koch_guru.models import Ingredient, Recipe
 from koch_guru.services.importer import RecipeDraft, normalize_url
 
 log = logging.getLogger(__name__)
@@ -51,6 +51,42 @@ class PropertyMapping:
     tag_options: tuple[str, ...] = ()
     origin_type: str | None = None
     origin_options: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IngredientFields:
+    """Properties of the ingredients database that the shopping list uses (None = missing)."""
+
+    bought: str | None = None  # checkbox
+    bought_on: str | None = None  # date
+    extra: str | None = None  # checkbox
+
+
+def _same_name(a: str, b: str) -> bool:
+    """Property names match regardless of letter case and a trailing question mark ("Bought?")."""
+    return a.casefold().strip().rstrip("?").strip() == b.casefold().strip().rstrip("?").strip()
+
+
+def _find_property(schema: dict[str, dict[str, Any]], name: str, kind: str) -> str | None:
+    """The property called `name` (see `_same_name`) if it has the type `kind`."""
+    return next((key for key, prop in schema.items() if _same_name(key, name) and prop.get("type") == kind), None)
+
+
+def page_to_ingredient(page: dict[str, Any], name: str, fields: IngredientFields) -> Ingredient:
+    props = page.get("properties") or {}
+
+    def checkbox(prop: str | None) -> bool:
+        return bool((props.get(prop) or {}).get("checkbox")) if prop else False
+
+    date = ((props.get(fields.bought_on) or {}).get("date") or {}) if fields.bought_on else {}
+    return Ingredient(
+        id=page["id"],
+        name=name,
+        icon=page_icon(page),
+        bought=checkbox(fields.bought),
+        bought_on=(date.get("start") or "")[:10] or None,
+        extra=checkbox(fields.extra),
+    )
 
 
 def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) -> PropertyMapping:
@@ -150,14 +186,14 @@ def page_to_recipe(
     url = (props.get(mapping.link) or {}).get("url") or None if mapping.link else None
 
     ingredients: tuple[str, ...] = ()
+    ingredient_ids: tuple[str, ...] = ()
     if mapping.ingredients_kind == "list":
         ingredients = _list_values(props.get(mapping.ingredients))
     elif mapping.ingredients_kind == "relation" and ingredient_names:
         # Page objects list at most 25 relations; enough for an ingredient list.
         related = (props.get(mapping.ingredients) or {}).get("relation") or []
-        ingredients = tuple(
-            ingredient_names[ref["id"]] for ref in related if ref.get("id") in ingredient_names
-        )
+        ingredient_ids = tuple(ref["id"] for ref in related if ref.get("id") in ingredient_names)
+        ingredients = tuple(ingredient_names[i] for i in ingredient_ids)
 
     return Recipe(
         id=page["id"],
@@ -167,6 +203,7 @@ def page_to_recipe(
         tags=_list_values(props.get(mapping.tags)) if mapping.tags else (),
         origin=_list_values(props.get(mapping.origin)) if mapping.origin else (),
         ingredients=ingredients,
+        ingredient_ids=ingredient_ids,
         this_week=bool((props.get(mapping.this_week) or {}).get("checkbox")) if mapping.this_week else False,
         emoji=_page_emoji(page),
         created=page.get("created_time"),
@@ -223,6 +260,8 @@ class RecipeRepository:
         self._ingredient_icons: dict[str, str] = {}
         self._ingredient_ids: dict[str, str] = {}  # name -> page id
         self._ingredient_source: tuple[str, str] | None = None  # (data source id, title property)
+        self._ingredient_fields: IngredientFields | None = None  # checked once per start
+        self._ingredients: dict[str, Ingredient] = {}  # page id -> ingredient
         self._content_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     @property
@@ -294,6 +333,10 @@ class RecipeRepository:
                 self._ingredient_warning_logged = True
             return {}
         names = {p["id"]: name for p in pages if (name := _page_title(p))}
+        fields = await self._ensure_ingredient_fields(data_source_id)
+        self._ingredients = {
+            p["id"]: page_to_ingredient(p, names[p["id"]], fields) for p in pages if p["id"] in names
+        }
         self._ingredient_ids = {name: page_id for page_id, name in names.items()}
         title_prop = next(
             (key for p in pages for key, prop in p.get("properties", {}).items() if prop.get("type") == "title"),
@@ -310,6 +353,95 @@ class RecipeRepository:
             ", ".join(f"{count} {kind}" for kind, count in kinds.most_common()),
         )
         return names
+
+    async def _ensure_ingredient_fields(self, data_source_id: str) -> IngredientFields:
+        """Find Bought, Gekauft am and Extra; create the last two if they are missing.
+
+        Runs once per start. Without edit access to the schema the shopping list still works,
+        only without a purchase date and without own items.
+        """
+        if self._ingredient_fields is not None:
+            return self._ingredient_fields
+        w = self._wanted
+        try:
+            source = await self._client.data_sources.retrieve(data_source_id=data_source_id)
+        except APIResponseError as exc:
+            log.warning("Felder der Zutaten-Datenbank nicht gelesen: %s", exc.code)
+            self._ingredient_fields = IngredientFields()
+            return self._ingredient_fields
+        schema = source.get("properties") or {}
+        def taken(name: str) -> bool:
+            return any(_same_name(key, name) for key in schema)
+
+        bought = _find_property(schema, w.bought, "checkbox")
+        bought_on = _find_property(schema, w.bought_on, "date")
+        extra = _find_property(schema, w.extra, "checkbox")
+        missing: dict[str, dict[str, Any]] = {}
+        if bought_on is None and not taken(w.bought_on):
+            missing[w.bought_on] = {"date": {}}
+        if extra is None and not taken(w.extra):
+            missing[w.extra] = {"checkbox": {}}
+        if missing:
+            try:
+                await self._client.data_sources.update(data_source_id=data_source_id, properties=missing)
+            except APIResponseError as exc:
+                log.warning("Felder %s nicht angelegt: %s", ", ".join(missing), exc.code)
+            else:
+                log.info("Felder in der Zutaten-Datenbank angelegt: %s", ", ".join(missing))
+                bought_on = bought_on or (w.bought_on if w.bought_on in missing else None)
+                extra = extra or (w.extra if w.extra in missing else None)
+        if bought is None:
+            log.warning("Die Zutaten-Datenbank hat keine Checkbox %r; abhaken geht nicht.", w.bought)
+        self._ingredient_fields = IngredientFields(bought=bought, bought_on=bought_on, extra=extra)
+        return self._ingredient_fields
+
+    @property
+    def ingredient_fields(self) -> IngredientFields:
+        return self._ingredient_fields or IngredientFields()
+
+    @property
+    def ingredients(self) -> dict[str, Ingredient]:
+        """Page id -> ingredient, loaded together with the recipes."""
+        return self._ingredients
+
+    async def set_bought(self, ingredient_id: str, value: bool, *, today: str) -> Ingredient:
+        """Tick an ingredient off the shopping list, or put it back. Sets "Gekauft am" with it."""
+        fields = self.ingredient_fields
+        if not fields.bought:
+            raise RuntimeError(f"Die Zutaten-Datenbank hat keine Checkbox „{self._wanted.bought}“.")
+        current = self._ingredients[ingredient_id]
+        props: dict[str, Any] = {fields.bought: {"checkbox": value}}
+        if fields.bought_on:
+            props[fields.bought_on] = {"date": {"start": today} if value else None}
+        await self._client.pages.update(page_id=ingredient_id, properties=props)
+        updated = dataclasses.replace(current, bought=value, bought_on=today if value else None)
+        self._ingredients[ingredient_id] = updated
+        return updated
+
+    async def add_extra(self, name: str) -> Ingredient:
+        """Put an own item on the shopping list. An ingredient with that name is reused."""
+        fields = self.ingredient_fields
+        if not fields.extra or self._ingredient_source is None:
+            raise RuntimeError(f"Die Zutaten-Datenbank hat keine Checkbox „{self._wanted.extra}“.")
+        props: dict[str, Any] = {fields.extra: {"checkbox": True}}
+        if fields.bought:
+            props[fields.bought] = {"checkbox": False}
+        if fields.bought_on:
+            props[fields.bought_on] = {"date": None}
+        existing = next((i for i in self._ingredients.values() if i.name.casefold() == name.casefold()), None)
+        if existing:
+            await self._client.pages.update(page_id=existing.id, properties=props)
+            added = dataclasses.replace(existing, extra=True, bought=False, bought_on=None)
+        else:
+            data_source_id, title_prop = self._ingredient_source
+            page = await self._client.pages.create(
+                parent={"type": "data_source_id", "data_source_id": data_source_id},
+                properties={title_prop: {"title": [_text(name)]}, **props},
+            )
+            added = Ingredient(id=page["id"], name=name, extra=True)
+            self._ingredient_ids[name] = page["id"]
+        self._ingredients[added.id] = added
+        return added
 
     @property
     def ingredient_names(self) -> list[str]:
