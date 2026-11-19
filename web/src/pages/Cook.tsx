@@ -278,10 +278,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
         {used.length > 0 && (
           <ul class="kochmodus-zutaten" aria-label="Zutaten für diesen Schritt">
             {used.map((item) => (
-              <li key={`${item.amount}|${item.name}`}>
-                {item.emoji ? `${item.emoji} ` : item.icon ? <img src={item.icon} alt="" width={18} height={18} /> : null}
-                {item.amount ? `${item.amount} ` : ''}{shortName(item.name)}
-              </li>
+              <li key={`${item.amount}|${item.name}`}>{item.amount ? `${item.amount} ` : ''}{shortName(item.name)}</li>
             ))}
           </ul>
         )}
