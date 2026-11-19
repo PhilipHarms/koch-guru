@@ -547,3 +547,14 @@ async def test_add_extra_creates_or_reuses_an_ingredient():
     assert again.id == "ing-2" and again.extra and not again.bought
     assert fake.updates[-1] == ("ing-2", {"properties": {
         "Extra": {"checkbox": True}, "Bought": {"checkbox": False}, "Gekauft am": {"date": None}}})
+
+
+async def test_bought_with_question_mark_is_found():
+    """Philip's ingredients database calls the checkbox "Bought?"."""
+    fake = FakeNotion(total=1)
+    fake.ingredient_schema = {"Name": {"type": "title"}, "Bought?": {"type": "checkbox"}, "Shop?": {"type": "rollup"}}
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    assert repo.ingredient_fields.bought == "Bought?"
+    await repo.set_bought("ing-1", True, today="2026-11-19")
+    assert fake.updates[-1][1]["properties"]["Bought?"] == {"checkbox": True}

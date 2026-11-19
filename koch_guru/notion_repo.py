@@ -62,12 +62,14 @@ class IngredientFields:
     extra: str | None = None  # checkbox
 
 
+def _same_name(a: str, b: str) -> bool:
+    """Property names match regardless of letter case and a trailing question mark ("Bought?")."""
+    return a.casefold().strip().rstrip("?").strip() == b.casefold().strip().rstrip("?").strip()
+
+
 def _find_property(schema: dict[str, dict[str, Any]], name: str, kind: str) -> str | None:
-    """The property called `name` (any letter case) if it has the type `kind`."""
-    return next(
-        (key for key, prop in schema.items() if key.casefold() == name.casefold() and prop.get("type") == kind),
-        None,
-    )
+    """The property called `name` (see `_same_name`) if it has the type `kind`."""
+    return next((key for key, prop in schema.items() if _same_name(key, name) and prop.get("type") == kind), None)
 
 
 def page_to_ingredient(page: dict[str, Any], name: str, fields: IngredientFields) -> Ingredient:
@@ -368,14 +370,16 @@ class RecipeRepository:
             self._ingredient_fields = IngredientFields()
             return self._ingredient_fields
         schema = source.get("properties") or {}
-        taken = {key.casefold() for key in schema}
+        def taken(name: str) -> bool:
+            return any(_same_name(key, name) for key in schema)
+
         bought = _find_property(schema, w.bought, "checkbox")
         bought_on = _find_property(schema, w.bought_on, "date")
         extra = _find_property(schema, w.extra, "checkbox")
         missing: dict[str, dict[str, Any]] = {}
-        if bought_on is None and w.bought_on.casefold() not in taken:
+        if bought_on is None and not taken(w.bought_on):
             missing[w.bought_on] = {"date": {}}
-        if extra is None and w.extra.casefold() not in taken:
+        if extra is None and not taken(w.extra):
             missing[w.extra] = {"checkbox": {}}
         if missing:
             try:
