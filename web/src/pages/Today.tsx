@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { api, type ChatTurn, type Recipe, type Suggestions } from '../lib/api';
+import { api, type Recipe } from '../lib/api';
 import { dailyPicks, type DailyPick } from '../lib/daily';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
 import { queryWords, searchScore } from '../lib/search';
-import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { hasOwnEmoji, tagStyle, tagWord } from '../lib/tiles';
+import { averageStars } from '../lib/cooked';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon, PlusIcon, SucheIcon, WeiterIcon } from '../components/icons';
-import { RecipeRow, searchInRecipes } from './Recipes';
+import { buildChips, filterRecipesBy, RecipeRow, searchInRecipes } from './Recipes';
 
 const SEARCH_PREVIEW = 5;
 
 /** Kept while the app is open, so the ideas are still there after looking at a recipe. */
-const remembered = { query: '', pick: 0, wish: '', history: [] as ChatTurn[], ideas: null as Suggestions | null };
+const remembered = { query: '', pick: 0 };
 
 export function TodayRoute() {
   const { me, recipes } = useData();
@@ -34,7 +35,7 @@ export function TodayRoute() {
       </header>
       <Search recipes={recipes} />
       {today && <DailySuggestion pick={today} canSwitch={picks.length > 1} onNext={() => setIndex((i) => i + 1)} />}
-      <Ideas />
+      <Categories recipes={recipes} />
       <ThisWeek recipes={recipes} picks={picks} exclude={today?.recipe.id} />
     </main>
   );
@@ -137,85 +138,49 @@ function DailySuggestion({ pick, canSwitch, onNext }: { pick: DailyPick; canSwit
   );
 }
 
-function Ideas() {
-  const [wish, setWish] = useState(remembered.wish);
-  const [ideas, setIdeas] = useState<Suggestions | null>(remembered.ideas);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const MAX_CATEGORIES = 12;
+const MIN_PER_CATEGORY = 2;
 
-  const ask = async (event: Event) => {
-    event.preventDefault();
-    const text = wish.trim();
-    if (!text || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api.suggest(text, remembered.history);
-      // Follow-ups like "lieber ohne Fleisch" refer to the last answer.
-      remembered.history = [
-        ...remembered.history,
-        { role: 'user' as const, content: text },
-        { role: 'assistant' as const, content: result.history_entry },
-      ].slice(-8);
-      remembered.ideas = result;
-      remembered.wish = '';
-      setIdeas(result);
-      setWish('');
-    } catch (err) {
-      setError(messageOf(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+type Category = { key: string; label: string; recipe: Recipe };
 
-  const reset = () => {
-    remembered.history = [];
-    remembered.ideas = null;
-    setIdeas(null);
-  };
+/** Tags with at least two recipes, most used first, each shown with a photo from one of its recipes. */
+function categoriesOf(recipes: Recipe[]): Category[] {
+  const used = new Set<string>();
+  const categories: Category[] = [];
+  for (const chip of buildChips(recipes)) {
+    if (!chip.key.startsWith('tag:') || categories.length >= MAX_CATEGORIES) continue;
+    const matching = recipes.filter(chip.matches);
+    if (matching.length < MIN_PER_CATEGORY) continue;
+    // A recipe with a photo, the best rated first; each photo only once across categories.
+    const ranked = [...matching].sort((a, b) =>
+      Number(Boolean(b.image)) - Number(Boolean(a.image))
+      || (averageStars(b) ?? 0) - (averageStars(a) ?? 0)
+      || (b.created || '').localeCompare(a.created || ''));
+    const recipe = ranked.find((r) => !used.has(r.id)) ?? ranked[0];
+    used.add(recipe.id);
+    categories.push({ key: chip.key, label: tagStyle(chip.label)?.label ?? tagWord(chip.label), recipe });
+  }
+  return categories;
+}
 
+function Categories({ recipes }: { recipes: Recipe[] }) {
+  const categories = useMemo(() => categoriesOf(recipes), [recipes]);
+  if (categories.length === 0) return null;
   return (
-    <section class="page-pad heute-ideen" aria-labelledby="ideen-titel">
-      <div class="leer-box heute-ideen-box">
-        <h2 id="ideen-titel" class="titel-block">Lust auf etwas Bestimmtes?</h2>
-        <p class="text-klein">Schreib einen Wunsch, KochGuru sucht passende Rezepte aus eurer Sammlung.</p>
-        <form class="heute-wunsch" onSubmit={ask}>
-          <label class="kg-search" for="wunsch">
-            <span class="kg-sr">Wunsch</span>
-            <input id="wunsch" type="text" placeholder="z. B. schnell und ohne Fleisch" value={wish} maxLength={500}
-              enterkeyhint="send" onInput={(e) => {
-                const value = (e.target as HTMLInputElement).value;
-                setWish(value);
-                remembered.wish = value;
-              }} />
-          </label>
-          <button type="submit" class="kg-btn kg-btn-primaer" disabled={busy || !wish.trim()}>
-            {busy ? 'Sucht …' : 'Vorschläge holen'}
-          </button>
-        </form>
-        {error && <p class="fehler" role="alert">{error}</p>}
+    <section class="heute-kategorien" aria-labelledby="kategorien-titel">
+      <div class="page-pad abschnitt-kopf">
+        <h2 id="kategorien-titel" class="abschnitt">Worauf habt ihr Lust?</h2>
       </div>
-      {ideas && (
-        <div class="heute-ideen-ergebnis" aria-live="polite">
-          {ideas.message && <p class="text-klein">{ideas.message}</p>}
-          {ideas.suggestions.length > 0 && (
-            <ul class="kg-liste">
-              {ideas.suggestions.map(({ recipe, reason }) => (
-                <li key={recipe.id}>
-                  <a class="kg-zeile" href={recipePath(recipe)}>
-                    <RecipeImage recipe={recipe} size="liste" />
-                    <span class="kg-zeile-text">
-                      <span class="titel-karte">{recipe.name}</span>
-                      <span class="meta heute-ideen-grund">{reason}</span>
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-          <button type="button" class="rezept-link" onClick={reset}>Neue Suche</button>
-        </div>
-      )}
+      <ul class="heute-kategorien-reihe">
+        {categories.map(({ key, label, recipe }) => (
+          <li key={key}>
+            <a class="heute-kategorie" href="/rezepte" onClick={() => filterRecipesBy(key)}>
+              <RecipeImage recipe={recipe} size="kreis" />
+              <span class="heute-kategorie-name">{label}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

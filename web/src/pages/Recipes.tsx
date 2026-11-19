@@ -41,9 +41,16 @@ export function searchInRecipes(query: string): void {
   remembered.scrollY = 0;
 }
 
-type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
+/** Open the overview filtered by one chip, e.g. a category on Heute. */
+export function filterRecipesBy(key: string): void {
+  remembered.query = '';
+  remembered.selected = [key];
+  remembered.scrollY = 0;
+}
 
-function buildChips(recipes: Recipe[]): Chip[] {
+export type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
+
+export function buildChips(recipes: Recipe[]): Chip[] {
   const count = (values: string[]) => {
     const counts = new Map<string, number>();
     for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
