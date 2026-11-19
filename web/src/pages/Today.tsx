@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { api, type ChatTurn, type Recipe, type Suggestions } from '../lib/api';
+import { api, type Recipe } from '../lib/api';
 import { dailyPicks, type DailyPick } from '../lib/daily';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { categories, categoryPhotos } from '../lib/categories';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon, PlusIcon, SucheIcon, WeiterIcon } from '../components/icons';
-import { RecipeRow, searchInRecipes } from './Recipes';
+import { filterRecipesBy, RecipeRow, searchInRecipes } from './Recipes';
 
 const SEARCH_PREVIEW = 5;
 
 /** Kept while the app is open, so the ideas are still there after looking at a recipe. */
-const remembered = { query: '', pick: 0, wish: '', history: [] as ChatTurn[], ideas: null as Suggestions | null };
+const remembered = { query: '', pick: 0 };
 
 export function TodayRoute() {
   const { me, recipes } = useData();
@@ -34,7 +35,7 @@ export function TodayRoute() {
       </header>
       <Search recipes={recipes} />
       {today && <DailySuggestion pick={today} canSwitch={picks.length > 1} onNext={() => setIndex((i) => i + 1)} />}
-      <Ideas />
+      <Categories recipes={recipes} />
       <ThisWeek recipes={recipes} picks={picks} exclude={today?.recipe.id} />
     </main>
   );
@@ -137,85 +138,27 @@ function DailySuggestion({ pick, canSwitch, onNext }: { pick: DailyPick; canSwit
   );
 }
 
-function Ideas() {
-  const [wish, setWish] = useState(remembered.wish);
-  const [ideas, setIdeas] = useState<Suggestions | null>(remembered.ideas);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const ask = async (event: Event) => {
-    event.preventDefault();
-    const text = wish.trim();
-    if (!text || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api.suggest(text, remembered.history);
-      // Follow-ups like "lieber ohne Fleisch" refer to the last answer.
-      remembered.history = [
-        ...remembered.history,
-        { role: 'user' as const, content: text },
-        { role: 'assistant' as const, content: result.history_entry },
-      ].slice(-8);
-      remembered.ideas = result;
-      remembered.wish = '';
-      setIdeas(result);
-      setWish('');
-    } catch (err) {
-      setError(messageOf(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const reset = () => {
-    remembered.history = [];
-    remembered.ideas = null;
-    setIdeas(null);
-  };
-
+function Categories({ recipes }: { recipes: Recipe[] }) {
+  const shown = useMemo(() => {
+    const photos = categoryPhotos(recipes, new Date());
+    return categories(recipes).flatMap((c) => (photos.has(c.label) ? [{ ...c, recipe: photos.get(c.label)! }] : []));
+  }, [recipes]);
+  if (shown.length === 0) return null;
   return (
-    <section class="page-pad heute-ideen" aria-labelledby="ideen-titel">
-      <div class="leer-box heute-ideen-box">
-        <h2 id="ideen-titel" class="titel-block">Lust auf etwas Bestimmtes?</h2>
-        <p class="text-klein">Schreib einen Wunsch, KochGuru sucht passende Rezepte aus eurer Sammlung.</p>
-        <form class="heute-wunsch" onSubmit={ask}>
-          <label class="kg-search" for="wunsch">
-            <span class="kg-sr">Wunsch</span>
-            <input id="wunsch" type="text" placeholder="z. B. schnell und ohne Fleisch" value={wish} maxLength={500}
-              enterkeyhint="send" onInput={(e) => {
-                const value = (e.target as HTMLInputElement).value;
-                setWish(value);
-                remembered.wish = value;
-              }} />
-          </label>
-          <button type="submit" class="kg-btn kg-btn-primaer" disabled={busy || !wish.trim()}>
-            {busy ? 'Sucht …' : 'Vorschläge holen'}
-          </button>
-        </form>
-        {error && <p class="fehler" role="alert">{error}</p>}
+    <section class="heute-kategorien" aria-labelledby="kategorien-titel">
+      <div class="page-pad abschnitt-kopf">
+        <h2 id="kategorien-titel" class="abschnitt">Worauf habt ihr Lust?</h2>
       </div>
-      {ideas && (
-        <div class="heute-ideen-ergebnis" aria-live="polite">
-          {ideas.message && <p class="text-klein">{ideas.message}</p>}
-          {ideas.suggestions.length > 0 && (
-            <ul class="kg-liste">
-              {ideas.suggestions.map(({ recipe, reason }) => (
-                <li key={recipe.id}>
-                  <a class="kg-zeile" href={recipePath(recipe)}>
-                    <RecipeImage recipe={recipe} size="liste" />
-                    <span class="kg-zeile-text">
-                      <span class="titel-karte">{recipe.name}</span>
-                      <span class="meta heute-ideen-grund">{reason}</span>
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-          <button type="button" class="rezept-link" onClick={reset}>Neue Suche</button>
-        </div>
-      )}
+      <ul class="heute-kategorien-reihe">
+        {shown.map(({ key, label, recipe }) => (
+          <li key={key}>
+            <a class="heute-kategorie" href="/rezepte" onClick={() => filterRecipesBy(key)}>
+              <RecipeImage recipe={recipe} size="kreis" />
+              <span class="heute-kategorie-name">{label}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

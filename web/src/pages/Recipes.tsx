@@ -6,6 +6,7 @@ import { averageStars, starsText } from '../lib/cooked';
 import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { categories } from '../lib/categories';
 import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, PlusIcon, SucheIcon } from '../components/icons';
 
@@ -41,6 +42,13 @@ export function searchInRecipes(query: string): void {
   remembered.scrollY = 0;
 }
 
+/** Open the overview filtered by one chip, e.g. a category on Heute. */
+export function filterRecipesBy(key: string): void {
+  remembered.query = '';
+  remembered.selected = [key];
+  remembered.scrollY = 0;
+}
+
 type Chip = { key: string; label: string; emoji?: string; matches: (r: Recipe) => boolean };
 
 function buildChips(recipes: Recipe[]): Chip[] {
@@ -49,7 +57,10 @@ function buildChips(recipes: Recipe[]): Chip[] {
     for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'));
   };
-  const tags = count(recipes.flatMap((r) => r.tags)).map(([tag]) => ({
+  // The categories of Heute first, in their order; they cover their tags ("Italian" under "Italienisch").
+  const fixed = categories(recipes);
+  const covered = new Set(fixed.flatMap((c) => c.tags));
+  const tags = count(recipes.flatMap((r) => r.tags).filter((t) => !covered.has(t))).map(([tag]) => ({
     key: `tag:${tag}`,
     label: tag,
     emoji: hasOwnEmoji(tag) ? undefined : tagStyle(tag)?.chip,
@@ -63,7 +74,7 @@ function buildChips(recipes: Recipe[]): Chip[] {
       label: origin,
       matches: (r: Recipe) => r.origin.includes(origin),
     }));
-  return [...tags, ...origins];
+  return [...fixed.map(({ key, label, emoji, matches }) => ({ key, label, emoji, matches })), ...tags, ...origins];
 }
 
 function RecipeCard({ recipe }: { recipe: Recipe }) {
@@ -146,8 +157,8 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
     setSort(next);
     save('sortierung', next);
   };
-  const toggleChip = (key: string) =>
-    setSelected((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
+  // One filter at a time: a tap selects it, a second tap shows all again.
+  const toggleChip = (key: string) => setSelected((current) => (current.includes(key) ? [] : [key]));
 
   return (
     <main class="page rezepte-mit-knopf">

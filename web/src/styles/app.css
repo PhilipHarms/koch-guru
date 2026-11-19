@@ -192,15 +192,6 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .heute-grund { margin: 0; font-size: 14px; font-weight: 600; color: var(--success); }
 .heute-vorschlag-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 
-.heute-ideen { display: flex; flex-direction: column; gap: var(--space-14); }
-.heute-ideen-box { align-items: stretch; }
-.heute-wunsch { display: flex; flex-direction: column; gap: var(--space-10); margin: 0; }
-.heute-wunsch .kg-search { height: auto; min-height: var(--size-search); }
-.heute-wunsch .kg-btn { align-self: flex-start; }
-.heute-ideen-ergebnis { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-8); }
-.heute-ideen-ergebnis p { margin: 0; }
-.heute-ideen-ergebnis .kg-liste { width: 100%; }
-.kg-zeile-text .heute-ideen-grund { color: var(--ink-muted); white-space: normal; }
 
 .heute-woche { display: flex; flex-direction: column; gap: var(--space-14); }
 .heute-woche-reihe {
@@ -466,3 +457,18 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .einkauf-da-kopf .kg-icon { margin-left: auto; color: var(--ink-muted); transition: transform 0.2s ease; }
 .einkauf-da-kopf[aria-expanded="true"] .kg-icon { transform: rotate(180deg); }
 .einkauf-da-kopf:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
+
+/* Heute: Kategorien */
+.heute-kategorien { display: flex; flex-direction: column; gap: var(--space-14); }
+.heute-kategorien-reihe {
+  list-style: none; margin: 0; padding: 0 var(--space-20); display: flex; gap: var(--space-16);
+  overflow-x: auto; scrollbar-width: none;
+}
+.heute-kategorien-reihe::-webkit-scrollbar { display: none; }
+.heute-kategorie { width: 104px; display: flex; flex-direction: column; align-items: center; gap: var(--space-10); color: var(--ink); text-decoration: none; }
+.kg-bild-kreis { width: 104px; height: 104px; flex-shrink: 0; border-radius: 50%; }
+.kg-bild-kreis .kg-bild-emoji { font-size: 44px; }
+.heute-kategorie-name {
+  font-size: 14px; font-weight: 600; line-height: 1.3; text-align: center;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
