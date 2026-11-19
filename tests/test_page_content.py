@@ -384,3 +384,26 @@ def test_ingredients_in_step():
     assert ingredients_in_step("Ein Ei verquirlen und in Öl braten.", items) == [5, 8]
     assert ingredients_in_step("Die Tomaten halbieren.", items) == [7]
     assert ingredients_in_step("Servieren.", items) == []
+
+
+def test_a_step_that_names_a_group_uses_only_that_group():
+    """Jamie Oliver's quesadillas: chilli for the filling, the salsa and the guacamole."""
+    items = [
+        {"name": "rote Chilischote, entkernt und fein gehackt", "amount": "1"},
+        {"name": "Tortillas", "amount": "4"},
+        {"group": "Für die Ananas-Salsa"},
+        {"name": "rote Chilischote", "amount": "½"},
+        {"name": "Ananas", "amount": "227 g"},
+        {"group": "Guacamole"},
+        {"name": "reife Avocados", "amount": "2"},
+        {"name": "rote Chilischote, entkernt und gehackt", "amount": "1"},
+    ]
+    step = "Für die Guacamole die Avocados halbieren und die Chilischote hacken."
+    assert ingredients_in_step(step, items) == [6, 7]
+    assert ingredients_in_step("Die Chilischote für die Salsa hacken.", items) == [3]
+    # Without a group, every line counts.
+    assert ingredients_in_step("Die Chilischote hacken.", items) == [0, 3, 7]
+    # A step heading names the group too.
+    assert ingredients_in_step("Die Chilischote hacken.", items, context="Guacamole") == [7]
+    # A named group without the ingredient does not hide it.
+    assert ingredients_in_step("Tortillas zur Guacamole reichen.", items) == [1]

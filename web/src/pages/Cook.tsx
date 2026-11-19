@@ -146,7 +146,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
   const [timers, setTimers] = useState<Record<number, Timer>>(saved?.timers ?? {});
   const [now, setNow] = useState(Date.now());
   const [showAll, setShowAll] = useState(false);
-  const awake = useScreenAwake();
+  useScreenAwake();
   const textRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -278,7 +278,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
         {used.length > 0 && (
           <ul class="kochmodus-zutaten" aria-label="Zutaten für diesen Schritt">
             {used.map((item) => (
-              <li key={item.name}>{item.emoji ? `${item.emoji} ` : ''}{item.amount ? `${item.amount} ` : ''}{shortName(item.name)}</li>
+              <li key={`${item.amount}|${item.name}`}>{item.amount ? `${item.amount} ` : ''}{shortName(item.name)}</li>
             ))}
           </ul>
         )}
@@ -297,8 +297,6 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
             </button>
           </div>
         )}
-
-        {awake && <p class="kochmodus-wach meta muted">Der Bildschirm bleibt an, solange der Kochmodus offen ist.</p>}
       </main>
 
       <footer class="kochmodus-fuss">
@@ -330,7 +328,9 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
                 <li key={i} class="zutaten-gruppe overline">{item.group}</li>
               ) : (
                 <li key={i} class={step.uses.includes(i) ? 'jetzt' : ''}>
-                  <span aria-hidden="true">{item.emoji ?? '·'}</span>
+                  <span class="kochmodus-alle-icon" aria-hidden="true">
+                    {item.emoji ?? (item.icon ? <img src={item.icon} alt="" width={20} height={20} /> : '·')}
+                  </span>
                   <span class="kochmodus-alle-name">{item.name}</span>
                   {item.amount && <span class="kochmodus-alle-menge">{item.amount}</span>}
                 </li>
@@ -345,13 +345,13 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
 
 type Line = Extract<Ingredient, { name: string }>;
 
-/** The same line twice (coriander for the filling and the dip) is shown once. */
+/** Lines that would look the same ("1 rote Chilischote" for filling and dip) are shown once. */
 function uniqueLines(items: Ingredient[]): Line[] {
   const seen = new Set<string>();
   const lines: Line[] = [];
   for (const item of items) {
     if ('group' in item) continue;
-    const key = `${item.amount ?? ''}|${item.name}`;
+    const key = `${item.amount ?? ''}|${shortName(item.name).toLocaleLowerCase('de')}`;
     if (!seen.has(key)) {
       seen.add(key);
       lines.push(item);
