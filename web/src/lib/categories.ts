@@ -11,7 +11,7 @@ export type CategoryDef = {
   label: string;
   tags: string[];
   photo?: string;
-  /** Show a different one of its recipes with a photo each day. */
+  /** Without a usable `photo`: a different one of its recipes with a photo each day. */
   rotate?: boolean;
   /** Used only when no recipe has any of the tags, e.g. stars for "Favorit". */
   fallback?: (recipe: Recipe) => boolean;
@@ -21,7 +21,7 @@ const NEW_DAYS = 30;
 
 export const CATEGORIES: CategoryDef[] = [
   {
-    label: 'Neu', tags: ['neu', 'new'], rotate: true,
+    label: 'Neu', tags: ['neu', 'new'], photo: 'Mushroom Bourguignon', rotate: true,
     fallback: (r) => Boolean(r.created) && Date.now() - Date.parse(r.created!) < NEW_DAYS * 86_400_000,
   },
   {
