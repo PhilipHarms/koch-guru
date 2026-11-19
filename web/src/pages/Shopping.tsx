@@ -258,9 +258,9 @@ export function ShoppingRoute() {
       {list.can_add && <AddExtra onAdded={added} />}
 
       {atHome.length > 0 && (
-        <section class="einkauf-gruppe page-pad einkauf-da" aria-label="Schon da">
+        <section class="einkauf-gruppe page-pad einkauf-da" aria-label="Auf Lager">
           <button type="button" class="einkauf-da-kopf" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
-            <span>Schon da</span>
+            <span>Auf Lager</span>
             <span class="einkauf-da-zahl">{atHome.length}</span>
             <AufklappenIcon size={20} />
           </button>
