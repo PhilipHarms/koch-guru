@@ -842,3 +842,68 @@ def test_too_many_lines_are_refused():
     c = signed_in(ContentRepo())
     body = {"ingredients": [f"{n} g Mehl" for n in range(1, 61)], "steps": [f"Schritt {n}." for n in range(1, 50)]}
     assert c.put(f"/api/recipes/{DAL_ID}/content", json=body).status_code == 422
+
+
+# --- Fotos nachholen ------------------------------------------------------------------------
+
+class PhotoRepo(EditRepo):
+    def __init__(self):
+        super().__init__()
+        self.cover_urls = []
+        self.recipes = [*self.recipes,
+                        Recipe(id="33333333-4444-5555-6666-777777777777", name="Shakshuka", notion_url="https://notion.so/s",
+                               url="https://example.com/shakshuka", cover="https://example.com/s.jpg")]
+
+    async def set_cover_url(self, page_id, url):
+        self.cover_urls.append((page_id, url))
+        self._set(page_id, cover=url)
+
+
+PAGES = {
+    "/dal": '<script type="application/ld+json">{"@type": "Recipe", "name": "Dal", "image": ["https://example.com/dal.jpg"]}</script>',
+    "/curry": '<meta property="og:image" content="/bilder/curry.jpg">',
+    "/leer": "<html><body>Kein Bild</body></html>",
+}
+
+
+def photo_client():
+    def handle(request):
+        page = PAGES.get(request.url.path)
+        return httpx.Response(200, text=page, headers={"content-type": "text/html"}) if page else httpx.Response(404)
+    return httpx.AsyncClient(transport=httpx.MockTransport(handle))
+
+
+def test_missing_photos_lists_recipes_without_cover():
+    data = signed_in(PhotoRepo()).get("/api/photos/missing").json()
+    assert [r["name"] for r in data["with_link"]] == ["Kürbis-Dal"]  # Shakshuka has a cover
+    assert data["without_link"] == 1  # Pasta e ceci has neither
+
+
+def test_find_photos_from_recipe_data_or_page_preview():
+    repo = PhotoRepo()
+    repo._set(PASTA_ID, url="https://example.com/curry")
+    c = signed_in(repo, http=photo_client())
+    found = c.post("/api/photos/find", json={"ids": [DAL_ID, PASTA_ID]}).json()
+    assert found == [{"id": DAL_ID, "image": "https://example.com/dal.jpg"},
+                     {"id": PASTA_ID, "image": "https://example.com/bilder/curry.jpg"}]
+    assert repo.cover_urls == []  # looking writes nothing
+
+
+def test_find_photos_without_result():
+    repo = PhotoRepo()
+    repo._set(DAL_ID, url="https://example.com/leer")
+    repo._set(PASTA_ID, url="https://example.com/weg")
+    found = signed_in(repo, http=photo_client()).post("/api/photos/find", json={"ids": [DAL_ID, PASTA_ID]}).json()
+    assert [f["image"] for f in found] == [None, None]
+    assert signed_in(repo).post("/api/photos/find", json={"ids": [DAL_ID] * 9}).status_code == 422
+
+
+def test_apply_photos_sets_covers():
+    repo = PhotoRepo()
+    c = signed_in(repo)
+    data = c.post("/api/photos/apply", json={"items": [{"id": DAL_ID, "image": "https://example.com/dal.jpg"}]}).json()
+    assert repo.cover_urls == [(DAL_ID, "https://example.com/dal.jpg")]
+    assert data["failed"] == [] and data["recipes"][0]["image"].startswith(f"/api/recipes/{DAL_ID.replace('-', '')}/image")
+    bad = c.post("/api/photos/apply", json={"items": [{"id": DAL_ID, "image": "http://example.com/x.jpg"}]})
+    assert bad.status_code == 422
+    assert client(repo).get("/api/photos/missing").status_code == 401

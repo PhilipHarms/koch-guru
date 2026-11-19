@@ -246,6 +246,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
+  missingPhotos: () => request<{ with_link: Recipe[]; without_link: number }>('/api/photos/missing'),
+  findPhotos: (ids: string[]) =>
+    request<{ id: string; image: string | null }[]>('/api/photos/find', { method: 'POST', body: JSON.stringify({ ids }) }),
+  applyPhotos: (items: { id: string; image: string }[]) =>
+    request<{ recipes: Recipe[]; failed: string[] }>('/api/photos/apply', { method: 'POST', body: JSON.stringify({ items }) }),
   recipeFields: () => request<RecipeFields>('/api/recipe-fields'),
   updateRecipe: (id: string, changes: RecipeChanges) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }),

@@ -771,3 +771,13 @@ async def test_save_content_without_link_changes_only_writes_blocks():
     target = (await repo.list_recipes())[0]
     await repo.save_content(target.id, blocks=content_blocks(ingredients=["1 Ei"], steps=[]), replace_ids=["x"])
     assert fake.updates == [] and fake.deleted == ["x"]
+
+
+async def test_set_cover_url():
+    fake = FakeNotion(total=2)
+    repo = make_repo(fake)
+    target = (await repo.list_recipes())[0]
+    await repo.set_cover_url(target.id, "https://example.com/foto.jpg")
+    assert fake.updates[-1] == (target.id, {"cover": {"type": "external", "external": {"url": "https://example.com/foto.jpg"}}})
+    assert next(r for r in await repo.list_recipes() if r.id == target.id).cover == "https://example.com/foto.jpg"
+    assert fake.query_calls == 1
