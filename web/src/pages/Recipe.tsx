@@ -6,8 +6,9 @@ import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
-import { cookedLabel, localToday } from '../lib/cooked';
+import { cookedLabel } from '../lib/cooked';
 import { Stars } from '../components/Stars';
+import { CookedSheet } from '../components/CookedSheet';
 import { RecipeImage } from '../components/RecipeImage';
 import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { shortName } from './Cook';
@@ -246,6 +247,7 @@ function Rating({ recipe }: { recipe: Recipe }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allNotes, setAllNotes] = useState(false);
+  const [cooked, setCooked] = useState(false);
   if (people.length === 0 && !cookedSupported) return null;
 
   const run = async (call: () => Promise<Recipe>) => {
@@ -261,7 +263,6 @@ function Rating({ recipe }: { recipe: Recipe }) {
   };
   const notes = (recipe.note ?? '').split('\n').filter((line) => line.trim()).reverse();
   const shown = allNotes ? notes : notes.slice(0, 3);
-  const cookedToday = recipe.last_cooked === localToday();
 
   return (
     <section class="bewertung" aria-labelledby="bewertung-titel">
@@ -296,12 +297,13 @@ function Rating({ recipe }: { recipe: Recipe }) {
           {allNotes ? 'Weniger Notizen' : `Alle ${notes.length} Notizen`}
         </button>
       )}
-      {cookedSupported && !cookedToday && (
-        <button type="button" class="neu-generieren" disabled={busy} onClick={() => run(() => api.cooked(recipe.id, {}))}>
-          <GekochtIcon size={16} />Heute gekocht
+      {cookedSupported && (
+        <button type="button" class="kg-btn kg-btn-sekundaer bewertung-gekocht" disabled={busy} onClick={() => setCooked(true)}>
+          <GekochtIcon size={18} />Gekocht eintragen
         </button>
       )}
       {error && <p class="fehler" role="alert">{error}</p>}
+      {cooked && <CookedSheet recipe={recipe} onCancel={() => setCooked(false)} onSaved={() => setCooked(false)} />}
     </section>
   );
 }

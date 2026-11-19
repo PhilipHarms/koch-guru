@@ -14,7 +14,7 @@ export function Stars({ value, person, onPick, disabled, size = 26 }: Props) {
   if (!onPick) {
     return (
       <span class="sterne" role="img" aria-label={value ? `${person}: ${value} von 5 Sternen` : `${person}: noch keine Bewertung`}>
-        {[1, 2, 3, 4, 5].map((n) => <Star key={n} filled={n <= value} size={size} />)}
+        {[1, 2, 3, 4, 5].map((n) => <span key={n} class="stern-platz"><Star filled={n <= value} size={size} /></span>)}
       </span>
     );
   }

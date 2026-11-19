@@ -52,7 +52,7 @@ export const ZurueckIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="m1
 export const WeiterIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="m9 18 6-6-6-6" /></Svg>;
 export const KochenIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="M7 4v16l13-8z" /></Svg>;
 export const GekochtIcon = (p: Props) => (
-  <Svg {...p}><path d="M3 12a9 9 0 0 1 18 0" /><path d="M2 12h20M7 16h10" /></Svg>
+  <Svg {...p}><path d="M5 10h14v5a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5z" /><path d="M3 10h18" /><path d="M9 6.5c0-1 1-1.5 1-2.5M14 6.5c0-1 1-1.5 1-2.5" /></Svg>
 );
 export const NeuIcon = (p: Props) => (
   <Svg {...p}><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8" /><path d="M4 4v4h4" /><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16" /><path d="M20 20v-4h-4" /></Svg>

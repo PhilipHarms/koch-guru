@@ -385,3 +385,7 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 }
 .gekocht-notiz textarea:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
 .kochmodus-gekocht .knopf-reihe .kg-btn { flex: 1; }
+.stern-platz { width: 36px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.bewertung-gekocht { align-self: stretch; margin-top: var(--space-4); }
+.blatt-hintergrund { position: fixed; inset: 0; z-index: 51; background: rgba(34, 27, 22, 0.35); }
+.kochmodus-alle.kochmodus-gekocht { z-index: 52; }
