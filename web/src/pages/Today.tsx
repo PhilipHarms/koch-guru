@@ -5,11 +5,12 @@ import { dailyPicks, type DailyPick } from '../lib/daily';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
 import { queryWords, searchScore } from '../lib/search';
-import { hasOwnEmoji, tagStyle, tagWord } from '../lib/tiles';
+import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { CATEGORIES, categoryMatcher, namedRecipe } from '../lib/categories';
 import { averageStars } from '../lib/cooked';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon, PlusIcon, SucheIcon, WeiterIcon } from '../components/icons';
-import { buildChips, filterRecipesBy, RecipeRow, searchInRecipes } from './Recipes';
+import { RecipeRow, searchInRecipes, showCategory } from './Recipes';
 
 const SEARCH_PREVIEW = 5;
 
@@ -138,27 +139,24 @@ function DailySuggestion({ pick, canSwitch, onNext }: { pick: DailyPick; canSwit
   );
 }
 
-const MAX_CATEGORIES = 12;
-const MIN_PER_CATEGORY = 2;
+type Category = { label: string; recipe: Recipe; matches: (recipe: Recipe) => boolean };
 
-type Category = { key: string; label: string; recipe: Recipe };
-
-/** Tags with at least two recipes, most used first, each shown with a photo from one of its recipes. */
+/** The fixed categories that have recipes, each with its chosen photo or one of its recipes. */
 function categoriesOf(recipes: Recipe[]): Category[] {
   const used = new Set<string>();
   const categories: Category[] = [];
-  for (const chip of buildChips(recipes)) {
-    if (!chip.key.startsWith('tag:') || categories.length >= MAX_CATEGORIES) continue;
-    const matching = recipes.filter(chip.matches);
-    if (matching.length < MIN_PER_CATEGORY) continue;
-    // A recipe with a photo, the best rated first; each photo only once across categories.
+  for (const def of CATEGORIES) {
+    const matches = categoryMatcher(def, recipes);
+    if (!matches) continue;
+    const matching = recipes.filter(matches);
+    // The chosen photo; else a recipe with a photo, the best rated first, each only once.
     const ranked = [...matching].sort((a, b) =>
       Number(Boolean(b.image)) - Number(Boolean(a.image))
       || (averageStars(b) ?? 0) - (averageStars(a) ?? 0)
       || (b.created || '').localeCompare(a.created || ''));
-    const recipe = ranked.find((r) => !used.has(r.id)) ?? ranked[0];
+    const recipe = namedRecipe(recipes, def.photo) ?? ranked.find((r) => !used.has(r.id)) ?? ranked[0];
     used.add(recipe.id);
-    categories.push({ key: chip.key, label: tagStyle(chip.label)?.label ?? tagWord(chip.label), recipe });
+    categories.push({ label: def.label, recipe, matches });
   }
   return categories;
 }
@@ -172,9 +170,9 @@ function Categories({ recipes }: { recipes: Recipe[] }) {
         <h2 id="kategorien-titel" class="abschnitt">Worauf habt ihr Lust?</h2>
       </div>
       <ul class="heute-kategorien-reihe">
-        {categories.map(({ key, label, recipe }) => (
-          <li key={key}>
-            <a class="heute-kategorie" href="/rezepte" onClick={() => filterRecipesBy(key)}>
+        {categories.map(({ label, recipe, matches }) => (
+          <li key={label}>
+            <a class="heute-kategorie" href="/rezepte" onClick={() => showCategory(label, matches)}>
               <RecipeImage recipe={recipe} size="kreis" />
               <span class="heute-kategorie-name">{label}</span>
             </a>
