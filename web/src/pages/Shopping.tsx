@@ -192,9 +192,6 @@ export function ShoppingRoute() {
 
       {list.can_add && <AddExtra onAdded={added} />}
 
-      <p class="page-pad text-klein muted einkauf-hinweis">
-        Abgehakt heißt: haben wir. Der Haken bleibt in Notion, bis ihr ihn wieder entfernt, und beide sehen den Stand sofort.
-      </p>
     </Frame>
   );
 }

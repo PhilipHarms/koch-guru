@@ -10,6 +10,8 @@ preview first, and saving is a separate step.
 
 from __future__ import annotations
 
+import dataclasses
+
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,6 +25,7 @@ from koch_guru.services.importer import (
     PHOTO_TYPES,
     TAG_RULES,
     ExtractedRecipe,
+    IngredientLink,
     Photo,
     RecipeDraft,
     RecipeImportError,
@@ -228,6 +231,34 @@ async def prepare(
         servings=result.portionen.strip() or draft.servings,
         minutes=draft.total_minutes,
         image=draft.image if draft.image and draft.image.startswith("https://") else None,
+    )
+
+
+async def prepare_import(draft: RecipeDraft, llm: StructuredLLM, known: list[str]) -> RecipeDraft:
+    """For an import in the bot: German lines and steps, and the ingredients to link.
+
+    Links follow the preselection of "Rezept generieren": everything except what is always
+    at home. If the model fails, the draft stays as it was and nothing gets linked.
+    """
+    try:
+        prepared = await prepare(draft, llm, known, linked=[])
+    except Exception as exc:  # the import still works, only without links
+        log.warning("Zutaten für den Import nicht aufbereitet: %r", exc)
+        return draft
+    seen: set[str] = set()
+    links = []
+    for item in prepared.ingredients:
+        name = item.existing or item.zutat
+        if not item.include or not name or fold(name) in seen:
+            continue
+        seen.add(fold(name))
+        links.append(IngredientLink(name=name, emoji=item.emoji, new=item.existing is None))
+    return dataclasses.replace(
+        draft,
+        ingredients=[i.line for i in prepared.ingredients],
+        steps=prepared.steps,
+        servings=prepared.servings,
+        links=links,
     )
 
 

@@ -102,8 +102,14 @@ class FakeRepo:
         self.existing = existing
         self.created = []
 
+    ingredient_names = ["Süßkartoffel", "Feta", "Salz"]
+
     async def find_existing(self, draft):
         return self.existing
+
+    async def link_ingredients(self, page_id, link):
+        self.linked = (page_id, list(link))
+        return [name for name, _ in link if name == "Kürbis"]  # as if it could not be created
 
     async def create_recipe(self, draft):
         self.created.append(draft)
@@ -430,3 +436,52 @@ async def test_image_document_is_accepted_and_errors_are_explained(monkeypatch):
     await handlers.photo_import(photo_update(message), fake_context(svc))
     assert calls[0][0] == [(b"png", "image/png")]
     assert "kein Rezept erkannt" in message.reply_text.call_args.args[0]
+
+
+class PrepareLLM(FakeLLM):
+    """Answers the step that turns an import into German lines with ingredients."""
+
+    async def structured(self, *, system, messages, output_type):
+        from koch_guru.services.generate import PreparedIngredient, PreparedRecipe
+        if output_type is not PreparedRecipe:
+            return await super().structured(system=system, messages=messages, output_type=output_type)
+        return PreparedRecipe(zutaten=[
+            PreparedIngredient(zeile="500 g Süßkartoffeln", zutat="Süßkartoffel", emoji="🍠", immer_da=False),
+            PreparedIngredient(zeile="Für den Dip:", zutat="", emoji="", immer_da=False, gruppe=True),
+            PreparedIngredient(zeile="1 Hokkaido-Kürbis", zutat="Kürbis", emoji="🎃", immer_da=False),
+            PreparedIngredient(zeile="1 Prise Salz", zutat="Salz", emoji="🧂", immer_da=True),
+        ], schritte=["Im Ofen backen."], portionen="2 Portionen")
+
+
+async def test_import_links_ingredients_like_rezept_generieren(monkeypatch):
+    repo = FakeRepo()
+    svc = import_services(monkeypatch, repo)
+    svc.llm = PrepareLLM()
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+
+    preview = message.reply_text.call_args.args[0]
+    assert "<b>Zutaten (3):</b> 500 g Süßkartoffeln, 1 Hokkaido-Kürbis, 1 Prise Salz" in preview
+    assert "<b>Zutaten-Datenbank:</b> 2 werden verknüpft, 1 davon neu angelegt" in preview
+    assert DRAFT.links == [] and DRAFT.ingredients == ["500 g Süßkartoffeln", "200 g Feta"]  # not changed
+
+    save = message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+    update, query = import_callback(PHILIP, save, preview)
+    await handlers.import_decision(update, fake_context(svc))
+    (draft,) = repo.created
+    assert draft.steps == ["Im Ofen backen."] and draft.servings == "2 Portionen"
+    assert repo.linked == ("neu-1", [("Süßkartoffel", "🍠"), ("Kürbis", "🎃")])  # salt is always at home
+    text = query.edit_message_text.call_args.args[0]
+    assert "In Notion angelegt" in text and "Nicht verknüpft: Kürbis" in text
+
+
+async def test_import_without_prepared_lines_links_nothing(monkeypatch):
+    repo = FakeRepo()
+    svc = import_services(monkeypatch, repo)  # FakeLLM has no answer for the preparation
+    update, message = fake_update("https://example.com/r")
+    await handlers.import_link(update, fake_context(svc))
+    assert "Zutaten-Datenbank" not in message.reply_text.call_args.args[0]
+    save = message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+    update, query = import_callback(PHILIP, save, "")
+    await handlers.import_decision(update, fake_context(svc))
+    assert repo.created == [DRAFT] and not hasattr(repo, "linked")
