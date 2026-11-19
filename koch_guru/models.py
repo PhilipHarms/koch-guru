@@ -20,7 +20,7 @@ class Recipe:
     created: str | None = None  # ISO timestamp of the Notion page, for "newest first"
     cover: str | None = None  # cover image URL; Notion-hosted ones expire after an hour
     last_cooked: str | None = None  # "Zuletzt gekocht", ISO date
-    ratings: tuple[tuple[str, int], ...] = ()  # (person, 1 to 5 stars) from "Bewertung <Name>"
+    ratings: tuple[tuple[str, float], ...] = ()  # (person, 0.25 to 5 stars in quarters) from "Bewertung <Name>"
     note: str | None = None  # "Notiz": lines like "19.11.2026 Philip: mehr Chili"
 
     @property

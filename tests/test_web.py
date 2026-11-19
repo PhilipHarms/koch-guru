@@ -907,3 +907,15 @@ def test_apply_photos_sets_covers():
     bad = c.post("/api/photos/apply", json={"items": [{"id": DAL_ID, "image": "http://example.com/x.jpg"}]})
     assert bad.status_code == 422
     assert client(repo).get("/api/photos/missing").status_code == 401
+
+
+def test_quarter_stars():
+    repo = FakeRepo()
+    c = signed_in(repo)
+    assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 4.25}).json()["ratings"] == {"Philip": 4.25}
+    whole = c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 4.0})
+    assert whole.json()["ratings"] == {"Philip": 4} and '"Philip":4}' in whole.text.replace(" ", "")
+    assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 4.1}).status_code == 422
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 0.75}).status_code == 200
+    assert repo.cooked[-1][3] == 0.75
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 0.1}).status_code == 422

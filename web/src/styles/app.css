@@ -346,7 +346,8 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
   flex-shrink: 0; width: 36px; height: 36px; border-radius: 18px; background: var(--surface);
   display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: var(--brand-text);
 }
-.bewertung-name { flex: 1; font-size: 15px; font-weight: 600; }
+.bewertung-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bewertung .stern-knopf, .bewertung .stern-platz { width: 33px; }
 .bewertung-notizen { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-8); }
 .bewertung-notizen li {
   display: flex; flex-direction: column; gap: 2px; padding: var(--space-12) var(--space-14);
@@ -494,3 +495,20 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .fotos-leiste { position: fixed; z-index: 9; left: 0; right: 0; bottom: calc(var(--size-nav) + env(safe-area-inset-bottom)); padding: var(--space-12) var(--space-20); background: linear-gradient(to top, var(--surface) 70%, transparent); display: flex; justify-content: center; }
 .fotos-leiste .kg-btn { width: 100%; max-width: 440px; box-sizing: border-box; }
 .rezepte-fotos-link { color: var(--brand-text); font-weight: 600; }
+
+/* Sterne in Vierteln */
+.stern-teil { position: relative; display: inline-block; flex-shrink: 0; line-height: 0; }
+.stern-teil > svg { display: block; }
+.stern-fuellung { position: absolute; top: 0; left: 0; height: 100%; overflow: hidden; }
+.stern-fuellung svg { display: block; }
+.sterne-wahl { display: inline-flex; flex-direction: column; align-items: center; gap: var(--space-4); }
+.sterne-fein { display: inline-flex; align-items: center; gap: var(--space-8); }
+.sterne-schritt {
+  width: 36px; height: 36px; padding: 0; border: 1.5px solid var(--line-strong); border-radius: 50%;
+  background: var(--surface); color: var(--ink); font-family: inherit; font-size: 20px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sterne-schritt:disabled { opacity: 0.35; cursor: default; }
+.sterne-schritt:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sterne-wert { min-width: 72px; text-align: center; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gekocht-sterne .sterne-wahl { align-self: flex-start; }
