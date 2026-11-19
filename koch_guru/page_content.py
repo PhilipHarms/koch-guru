@@ -151,6 +151,45 @@ def notes_text(blocks: Iterable[dict[str, Any]], limit: int = 20_000) -> str:
     return "\n".join(lines)[:limit]
 
 
+GENERATED_HEADINGS = {"zutaten": "ingredients", "zubereitung": "steps"}
+SHORTENED_NOTE = "Gekürzt, der Rest steht"
+
+
+def generated_sections(blocks: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Top-level blocks that "Rezept generieren" or the bot import wrote, to replace them.
+
+    These are the info line ("⏱ 30 Min · Quelle: …"), the headings "Zutaten" and
+    "Zubereitung" with the list items under them, and the note on a shortened recipe.
+    Notes, photos and everything else are left alone.
+    Returns {"ids": [...], "info": bool, "ingredients": n, "steps": n}.
+    """
+    found: dict[str, Any] = {"ids": [], "info": False, "ingredients": 0, "steps": 0}
+    section: str | None = None
+    for block in blocks:
+        kind = block.get("type", "")
+        text = _plain(block)
+        block_id = block.get("id")
+        if kind.startswith("heading_"):
+            section = GENERATED_HEADINGS.get(text.rstrip(":").strip().casefold())
+            if section and block_id:
+                found["ids"].append(block_id)
+            continue
+        if section and kind in ("bulleted_list_item", "numbered_list_item"):
+            if block_id:
+                found["ids"].append(block_id)
+                found[section] += 1
+            continue
+        if kind == "paragraph" and not text:
+            continue  # empty lines do not end a section
+        section = None
+        if kind == "paragraph" and block_id and (
+            ("Quelle:" in text and text.startswith(("⏱", "🍽", "Quelle:"))) or text.startswith(SHORTENED_NOTE)
+        ):
+            found["ids"].append(block_id)
+            found["info"] = found["info"] or "Quelle:" in text
+    return found
+
+
 def image_urls(blocks: Iterable[dict[str, Any]]) -> list[str]:
     """Addresses of all photos on a page, nested ones included, in page order."""
     urls: list[str] = []

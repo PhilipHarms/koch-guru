@@ -64,17 +64,20 @@ class FakeRepo:
     ingredient_icons = {"Kürbis": "🎃", "Linsen": "🫘"}
     ingredient_names = ["Kürbis", "Linsen", "Salz"]
 
-    async def save_generated(self, page_id, *, draft, link, cover=None):
+    async def save_generated(self, page_id, *, draft, link, cover=None, replace_ids=(), unlink_ids=(), new_link=None):
         self.saved = (page_id, draft, link, cover)
+        self.saved_changes = {"replace_ids": list(replace_ids), "unlink_ids": list(unlink_ids), "new_link": new_link}
         return [name for name, _ in link if name == "Unbekannt"]
 
-    async def page_blocks(self, page_id):
+    async def page_blocks(self, page_id, *, refresh=False):
         self.content_requests = getattr(self, "content_requests", []) + [page_id]
+        self.refreshed = getattr(self, "refreshed", 0) + int(refresh)
         return [
-            {"type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zutaten"}]}},
-            {"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": [{"plain_text": "500 g Kürbis"}]}},
-            {"type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zubereitung"}]}},
-            {"type": "numbered_list_item", "numbered_list_item": {"rich_text": [{"plain_text": "Kochen."}]}},
+            {"id": "b1", "type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zutaten"}]}},
+            {"id": "b2", "type": "bulleted_list_item",
+             "bulleted_list_item": {"rich_text": [{"plain_text": "500 g Kürbis"}]}},
+            {"id": "b3", "type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "Zubereitung"}]}},
+            {"id": "b4", "type": "numbered_list_item", "numbered_list_item": {"rich_text": [{"plain_text": "Kochen."}]}},
         ]
 
     async def clear_this_week(self):
@@ -407,3 +410,50 @@ def test_shopping_list_without_the_fields():
     assert c.patch("/api/ingredients/i-kuerbis", json={"bought": True}).status_code == 409
     assert c.post("/api/extras", json={"name": "Spülmittel"}).status_code == 409
     assert client().get("/api/shopping-list").status_code == 401
+
+
+def test_generate_again_from_a_corrected_link():
+    asked = []
+
+    def site(request):
+        asked.append(str(request.url))
+        return httpx.Response(200, text=DAL_PAGE, headers={"content-type": "text/html"})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(site))
+    repo = FakeRepo()
+    c = signed_in(repo, http=http, llm=GenerateLLM())
+    preview = c.post(f"/api/recipes/{DAL_ID}/generate", json={"again": True, "link": " https://example.org/dal "}).json()
+    assert asked == ["https://example.org/dal"]
+    assert preview["replaces"] == {"info": False, "ingredients": 1, "steps": 1}
+    assert preview["unlink"] == [{"id": "i-linsen", "name": "Linsen"}]  # the new version has no lentils
+    assert repo.refreshed == 1  # reads the page fresh, not from the cache
+
+    body = {"url": preview["url"], "servings": None, "minutes": None, "steps": preview["steps"],
+            "ingredients": [{"line": i["line"], "zutat": i["zutat"], "emoji": i["emoji"], "link": i["include"]}
+                            for i in preview["ingredients"]],
+            "replace": True, "unlink": ["i-linsen", "i-fremd"], "new_link": "https://example.org/dal",
+            "cover": "https://example.org/dal.jpg", "replace_cover": True}
+    c.post(f"/api/recipes/{DAL_ID}/generate/save", json=body)
+    assert repo.saved_changes == {"replace_ids": ["b1", "b2", "b3", "b4"], "unlink_ids": ["i-linsen"],
+                                  "new_link": "https://example.org/dal"}
+    assert repo.saved[3] == "https://example.org/dal.jpg"
+
+
+def test_generate_again_rejects_a_link_that_is_no_web_address():
+    repo = FakeRepo()
+    c = signed_in(repo, llm=GenerateLLM())
+    answer = c.post(f"/api/recipes/{DAL_ID}/generate", json={"again": True, "link": "instagram dal"})
+    assert answer.status_code == 422 and "https://" in answer.json()["detail"]
+
+
+def test_first_generation_keeps_link_and_content():
+    http = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, text=DAL_PAGE, headers={"content-type": "text/html"})))
+    repo = FakeRepo()
+    c = signed_in(repo, http=http, llm=GenerateLLM())
+    preview = c.post(f"/api/recipes/{DAL_ID}/generate").json()
+    assert "replaces" not in preview and "unlink" not in preview
+    body = {"url": preview["url"], "servings": None, "minutes": None, "steps": preview["steps"],
+            "ingredients": [], "new_link": "https://example.com/dal"}  # unchanged link
+    c.post(f"/api/recipes/{DAL_ID}/generate/save", json=body)
+    assert repo.saved_changes == {"replace_ids": [], "unlink_ids": [], "new_link": None}

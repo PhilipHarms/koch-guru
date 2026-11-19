@@ -11,6 +11,7 @@ import dataclasses
 import logging
 import time
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import quote
@@ -453,10 +454,10 @@ class RecipeRepository:
         """Ingredient name -> emoji, or image address of a Notion icon, from the ingredients database."""
         return self._ingredient_icons
 
-    async def page_blocks(self, page_id: str) -> list[dict[str, Any]]:
+    async def page_blocks(self, page_id: str, *, refresh: bool = False) -> list[dict[str, Any]]:
         """Content of a recipe page, with nested blocks under "children". Cached like the list."""
         cached = self._content_cache.get(page_id)
-        if cached and time.monotonic() - cached[0] < self._cache_seconds:
+        if cached and not refresh and time.monotonic() - cached[0] < self._cache_seconds:
             return cached[1]
         budget = [MAX_CHILD_REQUESTS]
         blocks = await self._block_children(page_id, 0, budget)
@@ -597,19 +598,40 @@ class RecipeRepository:
         draft: RecipeDraft,
         link: list[tuple[str, str | None]],
         cover: str | None = None,
+        replace_ids: Sequence[str] = (),
+        unlink_ids: Sequence[str] = (),
+        new_link: str | None = None,
     ) -> list[str]:
-        """Append ingredients and steps to the page, link ingredients and set the cover.
+        """Write ingredients and steps to the page, link ingredients and set the cover.
 
         `cover` is an image address, set as the page cover like an import in the bot does.
 
         `link` holds (ingredient name, emoji). Names from the ingredients database are
-        linked; other names get a new page there first. Links that are already set stay.
+        linked; other names get a new page there first. Links that are already set stay,
+        except `unlink_ids`, ingredients of an earlier, wrong version of the recipe.
+
+        `replace_ids` are blocks of an earlier generation (see `generated_sections`): the
+        new content goes in their place and they are deleted. Without them it is appended.
+        `new_link` replaces the recipe's Link, when it was corrected for this generation.
         Returns the names that could not be created or linked (e.g. without edit access).
         """
         if self._mapping is None:
             await self.connect()
         assert self._mapping
-        await self._client.blocks.children.append(block_id=page_id, children=draft_blocks(draft))
+        if new_link and self._mapping.link:
+            # First, so a failure leaves the page as it was.
+            await self._client.pages.update(page_id=page_id, properties={self._mapping.link: {"url": new_link}})
+        if replace_ids:
+            await self._client.blocks.children.append(
+                block_id=page_id, children=draft_blocks(draft), after=replace_ids[0]
+            )
+            for block_id in replace_ids:
+                try:
+                    await self._client.blocks.delete(block_id=block_id)
+                except APIResponseError as exc:  # a leftover line is better than a failed save
+                    log.warning("Alter Block %s nicht gelöscht: %s", block_id, exc.code)
+        else:
+            await self._client.blocks.children.append(block_id=page_id, children=draft_blocks(draft))
         if cover:
             try:
                 await self._client.pages.update(page_id=page_id, cover={"type": "external", "external": {"url": cover}})
@@ -630,10 +652,12 @@ class RecipeRepository:
                     by_key[name.casefold()] = found
                 if found not in ids:
                     ids.append(found)
-            if ids:
+            if ids or unlink_ids:
+                drop = {i.replace("-", "") for i in unlink_ids}
                 try:
                     current = await self._relation_ids(page_id, self._mapping.ingredients)
-                    merged = current + [i for i in ids if i not in current]
+                    kept = [i for i in current if i.replace("-", "") not in drop]
+                    merged = kept + [i for i in ids if i not in kept]
                     if merged != current:
                         await self._client.pages.update(
                             page_id=page_id,

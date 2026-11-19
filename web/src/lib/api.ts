@@ -69,6 +69,10 @@ export type GeneratedRecipe = {
   minutes: number | null;
   ingredients: GeneratedIngredient[];
   steps: string[];
+  /** Only when generating again: what the new version replaces on the Notion page. */
+  replaces?: { info: boolean; ingredients: number; steps: number };
+  /** Only when generating again: linked ingredients the new version does not use. */
+  unlink?: { id: string; name: string }[];
 };
 
 export type GeneratedSave = {
@@ -78,6 +82,13 @@ export type GeneratedSave = {
   ingredients: { line: string; zutat: string; emoji: string | null; link: boolean }[];
   steps: string[];
   cover: string | null;
+  replace_cover?: boolean;
+  /** Replace the earlier generated ingredients and steps. */
+  replace?: boolean;
+  /** Ingredient ids to unlink from the recipe. */
+  unlink?: string[];
+  /** Corrected link for the Link field in Notion. */
+  new_link?: string | null;
 };
 
 export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
@@ -137,8 +148,11 @@ export const api = {
   content: (id: string) => request<RecipeContent>(`/api/recipes/${encodeURIComponent(id)}/content`),
   suggest: (wish: string, history: ChatTurn[]) =>
     request<Suggestions>('/api/suggest', { method: 'POST', body: JSON.stringify({ wish, history }) }),
-  generate: (id: string) =>
-    request<GeneratedRecipe>(`/api/recipes/${encodeURIComponent(id)}/generate`, { method: 'POST' }),
+  generate: (id: string, again?: { link: string | null }) =>
+    request<GeneratedRecipe>(`/api/recipes/${encodeURIComponent(id)}/generate`, {
+      method: 'POST',
+      ...(again ? { body: JSON.stringify({ again: true, link: again.link }) } : {}),
+    }),
   saveGenerated: (id: string, body: GeneratedSave) =>
     request<{ recipe: Recipe; not_created: string[] }>(`/api/recipes/${encodeURIComponent(id)}/generate/save`, {
       method: 'POST',
