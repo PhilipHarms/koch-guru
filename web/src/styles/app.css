@@ -472,3 +472,7 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
   font-size: 14px; font-weight: 600; line-height: 1.3; text-align: center;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
 }
+
+/* Photos fade in once loaded; until then the tile with the emoji shows. */
+.kg-bild img { opacity: 0; transition: opacity 0.2s ease; }
+.kg-bild img.geladen { opacity: 1; }

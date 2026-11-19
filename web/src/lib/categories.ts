@@ -25,7 +25,7 @@ export const CATEGORIES: CategoryDef[] = [
     fallback: (r) => Boolean(r.created) && Date.now() - Date.parse(r.created!) < NEW_DAYS * 86_400_000,
   },
   {
-    label: 'Favorit', tags: ['favorit', 'favoriten', 'favorite', 'favourite', 'favorites', 'lieblingsrezept'],
+    label: 'Favoriten', tags: ['favorit', 'favoriten', 'favorite', 'favourite', 'favorites', 'lieblingsrezept'],
     photo: 'Black Bean Enchiladas',
     fallback: (r) => (averageStars(r) ?? 0) >= 4,
   },
@@ -82,7 +82,10 @@ export function namedRecipe(recipes: Recipe[], wanted: string | undefined): Reci
   const name = letters(wanted);
   let best: { recipe: Recipe; score: number } | undefined;
   for (const recipe of recipes) {
-    const score = similarity(letters(recipe.name), name);
+    const full = letters(recipe.name);
+    // "Black Bean Enchiladas" names "Black Bean Enchiladas mit Mais Salsa"; the shortest such name wins.
+    const contains = name.length >= 8 && full.includes(name) ? 0.9 + name.length / full.length / 10 : 0;
+    const score = Math.max(contains, similarity(full, name));
     if (score >= 0.8 && (!best || score > best.score)) best = { recipe, score };
   }
   return best?.recipe;
@@ -108,7 +111,7 @@ export function categories(recipes: Recipe[]): Category[] {
 }
 
 function tagEmoji(label: string): string | undefined {
-  return { Neu: '🌟', Favorit: '❤️', Veggie: '🥬' }[label];
+  return { Neu: '🌟', Favoriten: '❤️', Veggie: '🥬' }[label];
 }
 
 const newestFirst = (a: Recipe, b: Recipe) => (b.created || '').localeCompare(a.created || '');
