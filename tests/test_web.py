@@ -40,6 +40,28 @@ class FakeRepo:
             Ingredient("i-salz", "Salz"),
         ]}
         self.ingredient_fields = IngredientFields(bought="Bought", bought_on="Gekauft am", extra="Extra")
+        self.people = ["Philip", "Charlotte"]
+        self.supports_cooked = True
+        self.cooked = []
+
+    async def mark_cooked(self, page_id, *, person, today, stars=None, note=None):
+        self.cooked.append((page_id, person, today, stars, note))
+        ratings = dict(self._recipe(page_id).ratings)
+        if stars:
+            ratings[person] = stars
+        self._set(page_id, last_cooked=today, ratings=tuple(ratings.items()), note=note)
+
+    async def set_rating(self, page_id, person, stars):
+        ratings = {p: s for p, s in self._recipe(page_id).ratings if p != person}
+        if stars:
+            ratings[person] = stars
+        self._set(page_id, ratings=tuple(ratings.items()))
+
+    def _recipe(self, page_id):
+        return next(r for r in self.recipes if r.id == page_id)
+
+    def _set(self, page_id, **changes):
+        self.recipes = [dataclasses.replace(r, **changes) if r.id == page_id else r for r in self.recipes]
 
     async def set_bought(self, ingredient_id, value, *, today):
         self.ingredients[ingredient_id] = dataclasses.replace(
@@ -145,8 +167,10 @@ def test_list_recipes():
         "source_url": "https://example.com/dal", "notion_url": "https://notion.so/dal",
         "tags": ["Veggie"], "origin": ["Green Feast"], "ingredients": ["Kürbis", "Linsen"],
         "this_week": True, "emoji": "🍛", "image": None, "created": "2026-11-01T10:00:00.000Z",
+        "last_cooked": None, "ratings": {}, "note": None,
     }
     assert pasta["link"] == "https://notion.so/pasta" and pasta["emoji"] is None
+    assert data["people"] == ["Philip", "Charlotte"] and data["cooked_supported"] is True
 
 
 def test_get_recipe_accepts_id_without_dashes():
@@ -457,3 +481,24 @@ def test_first_generation_keeps_link_and_content():
             "ingredients": [], "new_link": "https://example.com/dal"}  # unchanged link
     c.post(f"/api/recipes/{DAL_ID}/generate/save", json=body)
     assert repo.saved_changes == {"replace_ids": [], "unlink_ids": [], "new_link": None}
+
+
+def test_cooked_with_stars_and_note_for_the_signed_in_person():
+    repo = FakeRepo()
+    data = signed_in(repo, key=CHARLOTTE_KEY).post(
+        f"/api/recipes/{DAL_ID}/cooked", json={"stars": 4, "note": "mehr Chili"}).json()
+    (page_id, person, day, stars, note), = repo.cooked
+    assert (page_id, person, stars, note) == (DAL_ID, "Charlotte", 4, "mehr Chili")
+    assert data["last_cooked"] == day and data["ratings"] == {"Charlotte": 4}
+    assert signed_in(repo).post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 6}).status_code == 422
+
+
+def test_rating_is_only_ever_your_own():
+    repo = FakeRepo()
+    c = signed_in(repo)  # Philip
+    assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 5}).json()["ratings"] == {"Philip": 5}
+    assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 0}).json()["ratings"] == {}
+    repo.people = ["Charlotte"]  # no "Bewertung Philip" in Notion
+    assert c.put(f"/api/recipes/{DAL_ID}/rating", json={"stars": 3}).status_code == 409
+    repo.supports_cooked = False
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={}).status_code == 409

@@ -137,6 +137,8 @@ class FakeNotion:
         self.reject_ingredients = False
         self.ingredient_schema = dict(INGREDIENT_SCHEMA)
         self.schema_updates = []
+        self.recipe_schema = dict(SCHEMA)
+        self.recipe_schema_updates = []
         self.reject_schema_updates = False
         self.bought = {"ing-2"}
         self.ingredient_tags = {}
@@ -171,7 +173,12 @@ class FakeNotion:
                 self.ingredient_schema[name] = {"type": next(iter(prop))}
             return httpx.Response(200, json={"object": "data_source", "properties": self.ingredient_schema})
         if path in (f"/v1/data_sources/{DS_ID}", f"/v1/data_sources/{DB_UUID}"):
-            return httpx.Response(200, json={"object": "data_source", "properties": SCHEMA})
+            if request.method == "PATCH":
+                body = json.loads(request.content)
+                self.recipe_schema_updates.append(body)
+                for name, prop in body["properties"].items():
+                    self.recipe_schema[name] = {"type": next(iter(prop))}
+            return httpx.Response(200, json={"object": "data_source", "properties": self.recipe_schema})
         if path == f"/v1/data_sources/{ING_DS}/query":
             if not self.ingredients_shared:
                 return self.error(404, "object_not_found")
@@ -227,10 +234,12 @@ class FakeNotion:
         return self.error(404, "object_not_found")
 
 
-def make_repo(fake, cache_seconds=300):
+def make_repo(fake, cache_seconds=300, people=()):
     http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
     client = AsyncClient(auth="secret", client=http)
-    return RecipeRepository(client, f"https://www.notion.so/ws/Rezepte-{DB_ID}?v=1", PropertyNames(), cache_seconds)
+    return RecipeRepository(
+        client, f"https://www.notion.so/ws/Rezepte-{DB_ID}?v=1", PropertyNames(), cache_seconds, people=people
+    )
 
 
 async def test_loads_all_pages_beyond_100_with_ingredient_names():
@@ -626,3 +635,42 @@ async def test_new_ingredient_gets_its_aisle_tag():
                for b in fake.created if b["parent"].get("data_source_id") == ING_DS}
     assert created["Pak Choi"]["Tags"] == {"multi_select": [{"name": "Gemüse"}]}
     assert "Tags" not in created["Tofu"]  # no new tags from the model
+
+
+async def test_cooking_fields_are_created_and_read():
+    fake = FakeNotion(total=1)
+    repo = make_repo(fake, people=["Philip", "Charlotte"])
+    await repo.list_recipes()
+    assert fake.recipe_schema_updates == [{"properties": {
+        "Zuletzt gekocht": {"date": {}}, "Notiz": {"rich_text": {}},
+        "Bewertung Philip": {"number": {"format": "number"}}, "Bewertung Charlotte": {"number": {"format": "number"}},
+    }}]
+    assert repo.people == ["Philip", "Charlotte"] and repo.supports_cooked
+
+
+async def test_mark_cooked_sets_date_stars_and_appends_the_note():
+    fake = FakeNotion(total=1)
+    fake.recipe_schema |= {"Zuletzt gekocht": {"type": "date"}, "Notiz": {"type": "rich_text"},
+                           "bewertung philip": {"type": "number"}, "Bewertung Charlotte": {"type": "number"}}
+    fake.pages[0]["properties"]["Notiz"] = {"type": "rich_text", "rich_text": text("01.11.2026 Charlotte: lecker")}
+    repo = make_repo(fake, people=["Philip", "Charlotte"])
+    await repo.list_recipes()
+    recipe = await repo.mark_cooked("page-0", person="Philip", today="2026-11-19", stars=4, note="  mehr   Chili ")
+    props = fake.updates[-1][1]["properties"]
+    assert props["Zuletzt gekocht"] == {"date": {"start": "2026-11-19"}}
+    assert props["bewertung philip"] == {"number": 4}  # the name as it is in Notion
+    assert props["Notiz"]["rich_text"][0]["text"]["content"] == "01.11.2026 Charlotte: lecker\n19.11.2026 Philip: mehr Chili"
+    assert recipe.last_cooked == "2026-11-19" and recipe.ratings == (("Philip", 4),)
+
+    recipe = await repo.set_rating("page-0", "Charlotte", 5)
+    assert fake.updates[-1][1] == {"properties": {"Bewertung Charlotte": {"number": 5}}}
+    assert recipe.ratings == (("Philip", 4), ("Charlotte", 5))
+    recipe = await repo.set_rating("page-0", "Philip", None)
+    assert recipe.ratings == (("Charlotte", 5),)
+
+
+def test_long_notes_drop_the_oldest_lines():
+    from koch_guru.notion_repo import NOTE_LIMIT, append_note
+    current = "\n".join(f"{n:02d}.01.2026 Philip: " + "x" * 200 for n in range(1, 40))
+    result = append_note(current, "19.11.2026 Philip: neu")
+    assert len(result) <= NOTE_LIMIT and result.endswith("neu") and not result.startswith("01.01")

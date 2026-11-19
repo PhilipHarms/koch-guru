@@ -1,4 +1,5 @@
 import type { Recipe } from './api';
+import { averageStars, daysSince } from './cooked';
 import { tagWord } from './tiles';
 
 /** Seasons as they appear in the Notion tags; the months at the edges count for both. */
@@ -30,7 +31,13 @@ function shuffled(recipes: Recipe[], seed: string): Recipe[] {
  * the season, then favourites, then seasonal recipes, then the rest of the collection.
  * Nothing here calls the model; it is the same for both of you all day.
  */
-export function dailyPicks(recipes: Recipe[], today: Date): DailyPick[] {
+/** Recently cooked recipes rest for a while, unless they are planned for the week. */
+const REST_DAYS = 14;
+
+export function dailyPicks(all: Recipe[], today: Date): DailyPick[] {
+  const rested = (r: Recipe) => !r.last_cooked || daysSince(r.last_cooked, today) >= REST_DAYS;
+  const fresh = all.filter((r) => r.this_week || rested(r));
+  const recipes = fresh.length ? fresh : all;
   const seed = today.toISOString().slice(0, 10);
   const seasons = SEASONS_BY_MONTH[today.getMonth()];
   const season = SEASON_NAMES[seasons[0]];
@@ -50,6 +57,7 @@ export function dailyPicks(recipes: Recipe[], today: Date): DailyPick[] {
   add(recipes.filter((r) => r.this_week), () => 'Steht auf eurer Wochenliste');
   add(recipes.filter((r) => favourite(r) && seasonal(r)), (r) => `Euer Favorit, passt zum ${seasonOf(r)}`);
   add(recipes.filter(favourite), () => 'Einer eurer Favoriten');
+  add(recipes.filter((r) => (averageStars(r) ?? 0) >= 4), () => 'Habt ihr gut bewertet');
   add(recipes.filter(seasonal), (r) => `Passt zum ${seasonOf(r)}`);
   add(recipes, () => 'Aus eurer Sammlung');
   return picks;

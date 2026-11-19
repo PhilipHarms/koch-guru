@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import type { Recipe } from '../lib/api';
 import { useData } from '../lib/data';
 import { recipePath, sourceOf } from '../lib/recipe';
+import { averageStars, starsText } from '../lib/cooked';
 import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
@@ -9,8 +10,26 @@ import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, SucheIcon } from '../components/icons';
 
 type View = 'kacheln' | 'liste';
-type Sort = 'neu' | 'name';
-const SORT_LABEL: Record<Sort, string> = { neu: 'Neu hinzugefügt', name: 'Name' };
+type Sort = 'neu' | 'name' | 'bewertung' | 'gekocht';
+const SORTS = ['neu', 'name', 'bewertung', 'gekocht'] as const;
+const SORT_LABEL: Record<Sort, string> = {
+  neu: 'Neu hinzugefügt', name: 'Name', bewertung: 'Bewertung', gekocht: 'Zuletzt gekocht',
+};
+
+function compare(sort: Sort): (a: Recipe, b: Recipe) => number {
+  const newest = (a: Recipe, b: Recipe) => (b.created || '').localeCompare(a.created || '');
+  if (sort === 'name') return (a, b) => a.name.localeCompare(b.name, 'de');
+  // Unrated and never cooked come last, newest first among them.
+  if (sort === 'bewertung') return (a, b) => (averageStars(b) ?? -1) - (averageStars(a) ?? -1) || newest(a, b);
+  if (sort === 'gekocht') return (a, b) => (b.last_cooked || '').localeCompare(a.last_cooked || '') || newest(a, b);
+  return newest;
+}
+
+/** "★ 4,5" when rated: quiet proof for the order by rating. */
+function StarsBadge({ recipe }: { recipe: Recipe }) {
+  const stars = averageStars(recipe);
+  return stars === null ? null : <span class="kg-sterne-klein">{starsText(stars)}</span>;
+}
 
 /** Search, filters and scroll position survive a visit to a recipe page and back. */
 const remembered = { query: '', selected: [] as string[], scrollY: 0 };
@@ -59,7 +78,7 @@ function RecipeCard({ recipe }: { recipe: Recipe }) {
         )}
       </RecipeImage>
       <span class="titel-karte">{recipe.name}</span>
-      <span class="quelle kg-karte-quelle">{sourceOf(recipe)}</span>
+      <span class="quelle kg-karte-quelle">{sourceOf(recipe)} <StarsBadge recipe={recipe} /></span>
     </a>
   );
 }
@@ -71,7 +90,7 @@ export function RecipeRow({ recipe }: { recipe: Recipe }) {
         <RecipeImage recipe={recipe} size="liste" />
         <span class="kg-zeile-text">
           <span class="titel-karte">{recipe.name}</span>
-          <span class="meta">{sourceOf(recipe)}</span>
+          <span class="meta">{sourceOf(recipe)} <StarsBadge recipe={recipe} /></span>
         </span>
       </a>
     </li>
@@ -83,6 +102,8 @@ export function RecipesRoute() {
 }
 
 export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
+  const { people, cookedSupported } = useData();
+  const sorts = SORTS.filter((s) => (s === 'bewertung' ? people.length > 0 : s === 'gekocht' ? cookedSupported : true));
   const [query, setQuery] = useState(remembered.query);
   const [selected, setSelected] = useState<string[]>(remembered.selected);
 
@@ -98,7 +119,7 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
     };
   }, []);
   const [view, setView] = useState<View>(() => load('ansicht', ['kacheln', 'liste'] as const, 'kacheln'));
-  const [sort, setSort] = useState<Sort>(() => load('sortierung', ['neu', 'name'] as const, 'neu'));
+  const [sort, setSort] = useState<Sort>(() => load('sortierung', SORTS, 'neu'));
 
   const chips = useMemo(() => buildChips(recipes), [recipes]);
 
@@ -107,22 +128,21 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
 
   const shown = useMemo(() => {
     const active = chips.filter((chip) => selected.includes(chip.key));
-    const bySort = (a: Recipe, b: Recipe) =>
-      sort === 'name' ? a.name.localeCompare(b.name, 'de') : (b.created || '').localeCompare(a.created || '');
+    const bySort = compare(sorts.includes(sort) ? sort : 'neu');
     const list = recipes
       .filter((r) => active.every((chip) => chip.matches(r)))
       .map((recipe) => ({ recipe, score: searching ? searchScore(recipe, words) : 1 }))
       .filter((hit) => hit.score > 0);
     // While searching, the best matches come first; the chosen order only breaks ties.
     return list.sort((a, b) => b.score - a.score || bySort(a.recipe, b.recipe)).map((hit) => hit.recipe);
-  }, [recipes, words, searching, selected, chips, sort]);
+  }, [recipes, words, searching, selected, chips, sort, sorts.join()]);
 
   const chooseView = (next: View) => {
     setView(next);
     save('ansicht', next);
   };
   const toggleSort = () => {
-    const next: Sort = sort === 'neu' ? 'name' : 'neu';
+    const next: Sort = sorts[(sorts.indexOf(sort) + 1) % sorts.length];
     setSort(next);
     save('sortierung', next);
   };
@@ -173,7 +193,7 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
         ) : (
           <button type="button" class="sort-button" onClick={toggleSort}>
             <span class="meta">Sortiert nach</span>
-            {SORT_LABEL[sort]}
+            {SORT_LABEL[sorts.includes(sort) ? sort : 'neu']}
             <AufklappenIcon size={18} />
           </button>
         )}

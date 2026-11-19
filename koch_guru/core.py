@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import httpx
 from notion_client import AsyncClient
 
-from koch_guru.config import Settings
+from koch_guru.config import Settings, display_name
 from koch_guru.llm import LLMClient
 from koch_guru.notion_repo import RecipeRepository
 
@@ -46,6 +46,8 @@ def build_core(settings: Settings) -> Core:
             settings.notion_database_id,
             settings.properties,
             cache_seconds=settings.recipe_cache_seconds,
+            # Everyone with a web login rates recipes on their own.
+            people=list(dict.fromkeys(display_name(n) for n in settings.app_users.values())),
         ),
         llm=LLMClient.for_openrouter(settings.openrouter_api_key, settings.model),
         http=httpx.AsyncClient(follow_redirects=True, timeout=20),

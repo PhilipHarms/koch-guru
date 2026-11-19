@@ -93,3 +93,12 @@ def test_history_text_uses_names_not_numbers():
     rec = Recommendation(message="Zwei Ideen", suggestions=[Suggestion(RECIPES[4], "schnell")])
     assert rec.as_history() == "Zwei Ideen\n- Ramen (schnell)"
     assert Recommendation(message="", suggestions=[]).as_history() == "(keine Vorschläge)"
+
+
+def test_catalog_shows_stars_and_when_it_was_cooked():
+    from datetime import date
+
+    recipe = Recipe(id="1", name="Dal", notion_url="n", ratings=(("Philip", 5), ("Charlotte", 4)),
+                    last_cooked="2026-11-10")
+    assert build_catalog([recipe], date(2026, 11, 19)) == "[1] Dal | Sterne: Philip 5, Charlotte 4 | gekocht vor 9 Tagen"
+    assert build_catalog([recipe]).endswith("Charlotte 4")  # without today, no age

@@ -48,6 +48,8 @@ bisherigen Verlauf. Wiederhole dann keine Rezepte, die du gerade schon vorgeschl
 außer der Haushalt fragt ausdrücklich danach.
 - Rezepte mit dem Vermerk „steht schon auf der Wochenliste“ schlägst du nur vor, wenn \
 danach gefragt wird.
+- Was in den letzten zwei Wochen gekocht wurde („gekocht vor … Tagen“), schlägst du nur \
+vor, wenn danach gefragt wird. Gut bewertete Rezepte („Sterne“) darfst du bevorzugen.
 - Verwende nur Nummern, die in der Liste stehen. Erfinde keine Rezepte.
 
 Antwortstil: Deutsch, locker, kurz.
@@ -96,7 +98,7 @@ class Recommendation:
         return "\n".join(lines) or "(keine Vorschläge)"
 
 
-def build_catalog(recipes: list[Recipe]) -> str:
+def build_catalog(recipes: list[Recipe], today: date | None = None) -> str:
     lines = []
     for nr, recipe in enumerate(recipes, start=1):
         line = f"[{nr}] {recipe.name}"
@@ -108,6 +110,15 @@ def build_catalog(recipes: list[Recipe]) -> str:
             line += f" | Zutaten: {', '.join(recipe.ingredients)}"
         if recipe.this_week:
             line += " | steht schon auf der Wochenliste"
+        if recipe.ratings:
+            line += " | Sterne: " + ", ".join(f"{person} {stars}" for person, stars in recipe.ratings)
+        if recipe.last_cooked and today:
+            try:
+                days = (today - date.fromisoformat(recipe.last_cooked)).days
+            except ValueError:
+                days = None
+            if days is not None and days >= 0:
+                line += " | heute gekocht" if days == 0 else f" | gekocht vor {days} Tagen"
         lines.append(line)
     return "\n".join(lines)
 
@@ -116,7 +127,7 @@ def build_system_prompt(recipes: list[Recipe], today: date) -> str:
     return (
         f"{SYSTEM_PROMPT}\n"
         f"Heute ist der {today.day}. {MONTHS[today.month - 1]} {today.year} ({season(today)}).\n\n"
-        f"<rezeptsammlung>\n{build_catalog(recipes)}\n</rezeptsammlung>"
+        f"<rezeptsammlung>\n{build_catalog(recipes, today)}\n</rezeptsammlung>"
     )
 
 

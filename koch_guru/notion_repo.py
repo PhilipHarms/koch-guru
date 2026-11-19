@@ -52,6 +52,9 @@ class PropertyMapping:
     tag_options: tuple[str, ...] = ()
     origin_type: str | None = None
     origin_options: tuple[str, ...] = ()
+    last_cooked: str | None = None  # date
+    note: str | None = None  # rich_text
+    ratings: tuple[tuple[str, str], ...] = ()  # (person, number property)
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,9 @@ def page_to_ingredient(page: dict[str, Any], name: str, fields: IngredientFields
     )
 
 
-def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) -> PropertyMapping:
+def resolve_mapping(
+    schema: dict[str, dict[str, Any]], wanted: PropertyNames, people: Sequence[str] = ()
+) -> PropertyMapping:
     """Map the data source schema to recipe fields.
 
     The title property is detected by type (every data source has exactly one).
@@ -146,7 +151,16 @@ def resolve_mapping(schema: dict[str, dict[str, Any]], wanted: PropertyNames) ->
         tag_options=_option_names(schema, tags),
         origin_type=types.get(origin) if origin else None,
         origin_options=_option_names(schema, origin),
+        last_cooked=_find_property(schema, wanted.last_cooked, "date"),
+        note=_find_property(schema, wanted.note, "rich_text"),
+        ratings=tuple(
+            (person, prop) for person in people if (prop := _find_property(schema, rating_name(wanted, person), "number"))
+        ),
     )
+
+
+def rating_name(wanted: PropertyNames, person: str) -> str:
+    return f"{wanted.rating} {person}"
 
 
 def _option_names(schema: dict[str, dict[str, Any]], prop: str | None) -> tuple[str, ...]:
@@ -222,6 +236,13 @@ def page_to_recipe(
         emoji=_page_emoji(page),
         created=page.get("created_time"),
         cover=_page_cover(page),
+        last_cooked=((props.get(mapping.last_cooked) or {}).get("date") or {}).get("start", "")[:10] or None
+        if mapping.last_cooked else None,
+        ratings=tuple(
+            (person, int(stars)) for person, prop in mapping.ratings
+            if isinstance(stars := (props.get(prop) or {}).get("number"), (int, float)) and 1 <= stars <= 5
+        ),
+        note=_plain_text((props.get(mapping.note) or {}).get("rich_text")) or None if mapping.note else None,
     )
 
 
@@ -260,8 +281,10 @@ class RecipeRepository:
         database_id: str,
         wanted: PropertyNames,
         cache_seconds: int = 300,
+        people: Sequence[str] = (),
     ) -> None:
         self._client = client
+        self._people = tuple(people)  # who rates recipes, e.g. ("Philip", "Charlotte")
         self._database_id = extract_notion_id(database_id) or database_id
         self._wanted = wanted
         self._cache_seconds = cache_seconds
@@ -290,13 +313,49 @@ class RecipeRepository:
         """Resolve the data source behind NOTION_DATABASE_ID and read its schema."""
         self._data_source_id = await self._resolve_data_source_id(self._database_id)
         data_source = await self._client.data_sources.retrieve(data_source_id=self._data_source_id)
-        self._mapping = resolve_mapping(data_source.get("properties", {}), self._wanted)
+        schema = data_source.get("properties", {})
+        self._mapping = resolve_mapping(schema, self._wanted, self._people)
+        if await self._add_cooking_fields(schema):
+            data_source = await self._client.data_sources.retrieve(data_source_id=self._data_source_id)
+            self._mapping = resolve_mapping(data_source.get("properties", {}), self._wanted, self._people)
         m = self._mapping
         log.info(
             "Notion verbunden: Titel=%r, Link=%r, Tags=%r, Origin=%r, Zutaten=%r (%s), This Week=%r",
             m.title, m.link, m.tags, m.origin, m.ingredients, m.ingredients_kind, m.this_week,
         )
         return self._mapping
+
+    async def _add_cooking_fields(self, schema: dict[str, dict[str, Any]]) -> bool:
+        """Create "Zuletzt gekocht", "Notiz" and one "Bewertung <Name>" per person if missing.
+
+        A name already used by a property of another type is left alone. Returns whether
+        fields were created; without edit access to the schema the app works without them.
+        """
+        assert self._mapping and self._data_source_id
+        w, m = self._wanted, self._mapping
+
+        def taken(name: str) -> bool:
+            return any(_same_name(key, name) for key in schema)
+
+        missing: dict[str, dict[str, Any]] = {}
+        if m.last_cooked is None and not taken(w.last_cooked):
+            missing[w.last_cooked] = {"date": {}}
+        if m.note is None and not taken(w.note):
+            missing[w.note] = {"rich_text": {}}
+        rated = {person for person, _ in m.ratings}
+        for person in self._people:
+            name = rating_name(w, person)
+            if person not in rated and not taken(name):
+                missing[name] = {"number": {"format": "number"}}
+        if not missing:
+            return False
+        try:
+            await self._client.data_sources.update(data_source_id=self._data_source_id, properties=missing)
+        except APIResponseError as exc:
+            log.warning("Felder %s nicht angelegt: %s", ", ".join(missing), exc.code)
+            return False
+        log.info("Felder in der Rezeptdatenbank angelegt: %s", ", ".join(missing))
+        return True
 
     async def _resolve_data_source_id(self, database_id: str) -> str:
         try:
@@ -756,12 +815,91 @@ class RecipeRepository:
         return ids
 
     def _update_cached(self, page_id: str, value: bool) -> None:
+        self._replace_cached(page_id, this_week=value)
+
+    def _replace_cached(self, page_id: str, **changes: Any) -> Recipe | None:
         if self._cache is None:
-            return
+            return None
         wanted = page_id.replace("-", "")
-        self._cache = [
-            dataclasses.replace(r, this_week=value) if r.short_id == wanted else r for r in self._cache
-        ]
+        updated = None
+        recipes = []
+        for recipe in self._cache:
+            if recipe.short_id == wanted:
+                recipe = updated = dataclasses.replace(recipe, **changes)
+            recipes.append(recipe)
+        self._cache = recipes
+        return updated
+
+    # --- Cooked and rated ----------------------------------------------------------------
+
+    @property
+    def people(self) -> list[str]:
+        """Who can rate: everyone with a "Bewertung <Name>" field."""
+        return [person for person, _ in self._mapping.ratings] if self._mapping else []
+
+    @property
+    def supports_cooked(self) -> bool:
+        return bool(self._mapping and self._mapping.last_cooked)
+
+    async def set_rating(self, page_id: str, person: str, stars: int | None) -> Recipe | None:
+        """Set or remove (None) one person's stars. Returns the updated recipe from the cache."""
+        prop = dict(self._mapping.ratings).get(person) if self._mapping else None
+        if prop is None:
+            raise RuntimeError(f"Die Rezeptdatenbank hat kein Feld „{rating_name(self._wanted, person)}“.")
+        await self._client.pages.update(page_id=page_id, properties={prop: {"number": stars}})
+        return self._cache_rating(page_id, person, stars)
+
+    async def mark_cooked(
+        self, page_id: str, *, person: str, today: str, stars: int | None = None, note: str | None = None
+    ) -> Recipe | None:
+        """"Gekocht": sets "Zuletzt gekocht", the person's stars and appends the note."""
+        if not self._mapping or not self._mapping.last_cooked:
+            raise RuntimeError(f"Die Rezeptdatenbank hat kein Feld „{self._wanted.last_cooked}“.")
+        m = self._mapping
+        props: dict[str, Any] = {m.last_cooked: {"date": {"start": today}}}
+        prop = dict(m.ratings).get(person)
+        if stars and prop:
+            props[prop] = {"number": stars}
+        text = None
+        if note and note.strip() and m.note:
+            # Read the note fresh, so a line written in Notion meanwhile is kept.
+            page = await self._client.pages.retrieve(page_id=page_id)
+            current = _plain_text(((page.get("properties") or {}).get(m.note) or {}).get("rich_text"))
+            day = f"{today[8:10]}.{today[5:7]}.{today[:4]}"
+            text = append_note(current, f"{day} {person}: {' '.join(note.split())}")
+            props[m.note] = {"rich_text": [_text(chunk) for chunk in _chunks(text, MAX_TEXT)]}
+        await self._client.pages.update(page_id=page_id, properties=props)
+        recipe = self._replace_cached(page_id, last_cooked=today, **({"note": text} if text is not None else {}))
+        if stars and prop:
+            recipe = self._cache_rating(page_id, person, stars) or recipe
+        return recipe
+
+    def _cache_rating(self, page_id: str, person: str, stars: int | None) -> Recipe | None:
+        recipe = next((r for r in self._cache or [] if r.short_id == page_id.replace("-", "")), None)
+        if recipe is None:
+            return None
+        order = self.people
+        ratings = [(p, s) for p, s in recipe.ratings if p != person]
+        if stars:
+            ratings.append((person, stars))
+        ratings.sort(key=lambda r: order.index(r[0]) if r[0] in order else len(order))
+        return self._replace_cached(page_id, ratings=tuple(ratings))
+
+
+NOTE_LIMIT = 6000  # characters kept in "Notiz"; the oldest lines go first
+
+
+def append_note(current: str, line: str) -> str:
+    """The note with one more line at the end, the oldest lines dropped beyond NOTE_LIMIT."""
+    lines = [*(current.splitlines() if current else []), line]
+    while len(lines) > 1 and len("\n".join(lines)) > NOTE_LIMIT:
+        lines.pop(0)
+    return "\n".join(lines)[-NOTE_LIMIT:]
+
+
+def _chunks(text: str, size: int) -> list[str]:
+    """Notion takes at most `size` characters per text object."""
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
 
 
 # --- Creating recipes ----------------------------------------------------------------

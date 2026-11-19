@@ -12,6 +12,12 @@ export type Recipe = {
   /** Cover photo through our server, or null. */
   image: string | null;
   created: string | null;
+  /** "Zuletzt gekocht", YYYY-MM-DD. */
+  last_cooked: string | null;
+  /** Stars per person, e.g. { Philip: 4 }. */
+  ratings: Record<string, number>;
+  /** "Notiz": lines like "19.11.2026 Philip: mehr Chili". */
+  note: string | null;
 };
 
 export type TextRun = { text: string; href?: string; bold?: boolean; italic?: boolean };
@@ -94,7 +100,13 @@ export type GeneratedSave = {
   new_link?: string | null;
 };
 
-export type RecipeList = { recipes: Recipe[]; week_supported: boolean };
+export type RecipeList = {
+  recipes: Recipe[];
+  week_supported: boolean;
+  /** Who can rate, in order. */
+  people: string[];
+  cooked_supported: boolean;
+};
 
 /** One line of the shopping list: an ingredient page in Notion. `done` is its "Bought" checkbox. */
 export type ShoppingItem = {
@@ -173,6 +185,10 @@ export const api = {
     }),
   addExtra: (name: string) =>
     request<ShoppingItem>('/api/extras', { method: 'POST', body: JSON.stringify({ name }) }),
+  cooked: (id: string, body: { stars?: number | null; note?: string | null }) =>
+    request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/cooked`, { method: 'POST', body: JSON.stringify(body) }),
+  rate: (id: string, stars: number) =>
+    request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/rating`, { method: 'PUT', body: JSON.stringify({ stars }) }),
   clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {

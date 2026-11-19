@@ -11,6 +11,10 @@ import hmac
 
 from fastapi import HTTPException, Request, status
 
+from koch_guru.config import display_name
+
+__all__ = ["COOKIE_NAME", "current_user", "display_name", "user_for_key"]
+
 COOKIE_NAME = "kg_session"
 COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # one year
 
@@ -33,6 +37,3 @@ def current_user(request: Request) -> str:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet")
     return name
 
-
-def display_name(name: str) -> str:
-    return name[:1].upper() + name[1:]
