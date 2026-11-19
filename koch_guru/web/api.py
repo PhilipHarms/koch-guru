@@ -30,6 +30,7 @@ from koch_guru.page_content import (
 )
 from koch_guru.services.drafts import DraftStore
 from koch_guru.services.generate import generate, line_name, name_ingredients, prepare
+from koch_guru.services.photos import find_photo
 from koch_guru.services.importer import (
     MAX_PHOTOS,
     PHOTO_TYPES,
@@ -761,3 +762,64 @@ async def save_content(recipe_id: str, body: ContentSave, request: Request) -> d
         unlink_ids=[linked[key] for i in body.unlink if (key := i.replace("-", "")) in linked],
     )
     return {"recipe": recipe_json(await find_recipe(repo, recipe.id)), "not_created": not_created}
+
+
+# --- Fotos nachholen ----------------------------------------------------------------------
+
+MAX_PHOTO_LOOKUPS = 8  # pages per request; the app asks batch by batch and shows progress
+
+
+@router.get("/photos/missing")
+async def missing_photos(request: Request) -> dict[str, Any]:
+    """Recipes without a cover: those with a link (where a photo can be looked for) and the rest."""
+    recipes = await repo_of(request).list_recipes()
+    without = [r for r in recipes if not r.cover]
+    with_link = [r for r in without if web_link(r.url)]
+    return {"with_link": [recipe_json(r) for r in with_link], "without_link": len(without) - len(with_link)}
+
+
+class PhotoLookup(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=MAX_PHOTO_LOOKUPS)
+
+
+@router.post("/photos/find")
+async def find_photos(body: PhotoLookup, request: Request) -> list[dict[str, Any]]:
+    """For each recipe, the photo of its linked page, or null. Writes nothing."""
+    repo = repo_of(request)
+    http = request.app.state.http
+    recipes = [await find_recipe(repo, recipe_id) for recipe_id in body.ids]
+
+    async def one(recipe: Recipe) -> dict[str, Any]:
+        url = web_link(recipe.url)
+        return {"id": recipe.id, "image": await find_photo(url, http) if url else None}
+
+    return list(await asyncio.gather(*(one(r) for r in recipes)))
+
+
+class PhotoChoice(BaseModel):
+    id: str = Field(max_length=64)
+    image: str = Field(max_length=2000)
+
+
+class PhotoApply(BaseModel):
+    items: list[PhotoChoice] = Field(min_length=1, max_length=50)
+
+
+@router.post("/photos/apply")
+async def apply_photos(body: PhotoApply, request: Request) -> dict[str, Any]:
+    """Set the chosen photos as covers in Notion. Returns the updated recipes and those that failed."""
+    repo = repo_of(request)
+    updated: list[dict[str, Any]] = []
+    failed: list[str] = []
+    for item in body.items:
+        if not item.image.startswith("https://"):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Nur Fotos mit https://-Adresse.")
+        recipe = await find_recipe(repo, item.id)
+        try:
+            await repo.set_cover_url(recipe.id, item.image)
+        except APIResponseError as exc:
+            log.warning("Titelbild für %s nicht gesetzt: %s", recipe.id, exc.code)
+            failed.append(recipe.name)
+            continue
+        updated.append(recipe_json(await find_recipe(repo, recipe.id)))
+    return {"recipes": updated, "failed": failed}

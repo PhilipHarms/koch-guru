@@ -157,6 +157,9 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
     setSort(next);
     save('sortierung', next);
   };
+  // Recipes with a link but no photo: their photo can be fetched on "Fotos nachholen".
+  const withoutPhoto = useMemo(() => recipes.filter((r) => !r.image && r.source_url).length, [recipes]);
+
   // One filter at a time: a tap selects it, a second tap shows all again.
   const toggleChip = (key: string) => setSelected((current) => (current.includes(key) ? [] : [key]));
 
@@ -166,6 +169,9 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
         <h1 class="titel-seite">Rezepte</h1>
         <p class="text-klein page-summary" aria-live="polite">
           {shown.length === recipes.length ? `${recipes.length} Rezepte` : `${shown.length} von ${recipes.length} Rezepten`}
+          {withoutPhoto > 0 && (
+            <> · <a class="rezepte-fotos-link" href="/rezepte/fotos">{withoutPhoto} ohne Foto</a></>
+          )}
         </p>
       </header>
 

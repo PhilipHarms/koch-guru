@@ -681,6 +681,12 @@ class RecipeRepository:
             self._cache = None  # not cached or no address in the answer: read the page again
         return updated
 
+    async def set_cover_url(self, page_id: str, url: str) -> None:
+        """A photo from the web as the cover, like an import does."""
+        await self._client.pages.update(page_id=page_id, cover={"type": "external", "external": {"url": url}})
+        if self._replace_cached(page_id, cover=url) is None:
+            self._cache = None
+
     async def remove_cover(self, page_id: str) -> None:
         await self._client.pages.update(page_id=page_id, cover=None)
         if self._replace_cached(page_id, cover=None) is None:
