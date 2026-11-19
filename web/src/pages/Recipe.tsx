@@ -6,8 +6,10 @@ import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
+import { cookedLabel, localToday } from '../lib/cooked';
+import { Stars } from '../components/Stars';
 import { RecipeImage } from '../components/RecipeImage';
-import { ExternIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { shortName } from './Cook';
 import { PlaceholderPage } from './Placeholder';
 
@@ -73,12 +75,13 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         <header class="rezept-kopf">
           <h1 class="titel-rezept">{recipe.name}</h1>
           <p class="quelle rezept-quelle">{sourceOf(recipe)}</p>
-          {ready && (ready.minutes || ready.servings) ? (
+          {(ready && (ready.minutes || ready.servings)) || recipe.last_cooked ? (
             <p class="meta rezept-meta">
-              {ready.minutes ? <span><UhrIcon size={18} />{ready.minutes} Min.</span> : null}
-              {ready.servings ? (
+              {ready?.minutes ? <span><UhrIcon size={18} />{ready.minutes} Min.</span> : null}
+              {ready?.servings ? (
                 <span><PortionenIcon size={18} />{/^\d+$/.test(ready.servings) ? `${ready.servings} Portionen` : ready.servings}</span>
               ) : null}
+              {recipe.last_cooked ? <span><GekochtIcon size={18} />{cookedLabel(recipe.last_cooked)}</span> : null}
             </p>
           ) : null}
           {recipe.tags.length > 0 && (
@@ -117,6 +120,8 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
             </a>
           </div>
         </div>
+
+        <Rating recipe={recipe} />
 
         {content.kind === 'loading' && <p class="text-klein muted" aria-live="polite">Rezept wird geladen …</p>}
         {content.kind === 'error' && (
@@ -227,6 +232,76 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
         </button>
         </>
       )}
+    </section>
+  );
+}
+
+// --- Bewertung ---------------------------------------------------------------------------
+
+const NOTE_LINE = /^(\d{2}\.\d{2}\.\d{4}) ([^:]{1,40}): (.*)$/;
+
+/** Both of your stars, your own ones to tap; the notes from "Gekocht", newest first. */
+function Rating({ recipe }: { recipe: Recipe }) {
+  const { me, people, cookedSupported, updateRecipe } = useData();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [allNotes, setAllNotes] = useState(false);
+  if (people.length === 0 && !cookedSupported) return null;
+
+  const run = async (call: () => Promise<Recipe>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateRecipe(await call());
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const notes = (recipe.note ?? '').split('\n').filter((line) => line.trim()).reverse();
+  const shown = allNotes ? notes : notes.slice(0, 3);
+  const cookedToday = recipe.last_cooked === localToday();
+
+  return (
+    <section class="bewertung" aria-labelledby="bewertung-titel">
+      <h2 id="bewertung-titel" class="titel-block">Eure Bewertung</h2>
+      {people.map((person) => (
+        <div key={person} class="bewertung-zeile">
+          <span class="bewertung-initiale" aria-hidden="true">{person.slice(0, 1)}</span>
+          <span class="bewertung-name">{person}</span>
+          <Stars value={recipe.ratings?.[person] ?? 0} person={person} disabled={busy}
+            onPick={person === me.name ? (stars) => run(() => api.rate(recipe.id, stars)) : undefined} />
+        </div>
+      ))}
+      {shown.length > 0 && (
+        <ul class="bewertung-notizen">
+          {shown.map((line, i) => {
+            const match = NOTE_LINE.exec(line);
+            return (
+              <li key={i}>
+                {match ? (
+                  <>
+                    <span class="bewertung-notiz-kopf meta muted">{match[2]} · {match[1]}</span>
+                    <span>{match[3]}</span>
+                  </>
+                ) : line}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {notes.length > 3 && (
+        <button type="button" class="neu-generieren" onClick={() => setAllNotes(!allNotes)}>
+          {allNotes ? 'Weniger Notizen' : `Alle ${notes.length} Notizen`}
+        </button>
+      )}
+      {cookedSupported && !cookedToday && (
+        <button type="button" class="neu-generieren" disabled={busy} onClick={() => run(() => api.cooked(recipe.id, {}))}>
+          <GekochtIcon size={16} />Heute gekocht
+        </button>
+      )}
+      {error && <p class="fehler" role="alert">{error}</p>}
     </section>
   );
 }

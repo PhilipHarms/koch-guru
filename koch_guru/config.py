@@ -15,6 +15,11 @@ from dotenv import load_dotenv
 DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"  # OpenRouter model slug
 
 
+def display_name(name: str) -> str:
+    """"philip" from APP_USERS -> "Philip", as in "Bewertung Philip"."""
+    return name[:1].upper() + name[1:]
+
+
 class ConfigError(RuntimeError):
     """Raised when required settings are missing or invalid."""
 
@@ -28,6 +33,9 @@ class PropertyNames:
     origin: str = "Origin"
     ingredients: str = "Ingredients"  # text/select property or relation to an ingredients DB
     this_week: str = "This Week?"  # checkbox
+    rating: str = "Bewertung"  # number per person, "Bewertung Philip"; created by the app if missing
+    last_cooked: str = "Zuletzt gekocht"  # date, created by the app if missing
+    note: str = "Notiz"  # text, created by the app if missing
     # In the ingredients database:
     bought: str = "Bought"  # checkbox, ticked off on the shopping list
     bought_on: str = "Gekauft am"  # date, created by the app if missing
@@ -142,6 +150,9 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
             origin=get("NOTION_PROP_ORIGIN", defaults.origin),
             ingredients=get("NOTION_PROP_INGREDIENTS", defaults.ingredients),
             this_week=get("NOTION_PROP_THIS_WEEK", defaults.this_week),
+            rating=get("NOTION_PROP_RATING", defaults.rating),
+            last_cooked=get("NOTION_PROP_LAST_COOKED", defaults.last_cooked),
+            note=get("NOTION_PROP_NOTE", defaults.note),
             bought=get("NOTION_PROP_BOUGHT", defaults.bought),
             bought_on=get("NOTION_PROP_BOUGHT_ON", defaults.bought_on),
             extra=get("NOTION_PROP_EXTRA", defaults.extra),

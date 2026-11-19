@@ -17,7 +17,7 @@ type State =
   | { kind: 'loading' }
   | { kind: 'signed-out' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; me: Me; recipes: Recipe[]; weekSupported: boolean };
+  | { kind: 'ready'; me: Me; recipes: Recipe[]; weekSupported: boolean; people: string[]; cookedSupported: boolean };
 
 // Route components live outside App, so that a data update re-renders them instead of
 // mounting them anew (which would reload a recipe page and lose its state).
@@ -37,7 +37,10 @@ export function App() {
   const loadAll = useCallback(async () => {
     try {
       const [me, list] = await Promise.all([api.me(), api.recipes()]);
-      setState({ kind: 'ready', me, recipes: list.recipes, weekSupported: list.week_supported });
+      setState({
+        kind: 'ready', me, recipes: list.recipes, weekSupported: list.week_supported,
+        people: list.people ?? [], cookedSupported: Boolean(list.cooked_supported),
+      });
     } catch (error) {
       if (error instanceof NotSignedIn) setState({ kind: 'signed-out' });
       else setState({ kind: 'error', message: error instanceof Error ? error.message : 'Unbekannter Fehler' });
@@ -58,7 +61,10 @@ export function App() {
 
   const data = useMemo<AppData | null>(
     () => (state.kind === 'ready'
-      ? { me: state.me, recipes: state.recipes, weekSupported: state.weekSupported, updateRecipe, weekCleared }
+      ? {
+          me: state.me, recipes: state.recipes, weekSupported: state.weekSupported,
+          people: state.people, cookedSupported: state.cookedSupported, updateRecipe, weekCleared,
+        }
       : null),
     [state, updateRecipe, weekCleared],
   );

@@ -6,6 +6,9 @@ export type AppData = {
   me: Me;
   recipes: Recipe[];
   weekSupported: boolean;
+  /** Who can rate recipes, e.g. ["Philip", "Charlotte"]; empty without the fields in Notion. */
+  people: string[];
+  cookedSupported: boolean;
   /** Replace one recipe after the server confirmed a change. */
   updateRecipe: (recipe: Recipe) => void;
   /** Untick "This Week?" everywhere after the server cleared the list. */

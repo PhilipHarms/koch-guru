@@ -344,3 +344,44 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .einkauf-abteilung { padding-top: var(--space-4); }
 .kochmodus-alle-icon { width: 24px; display: inline-flex; justify-content: center; }
 .kochmodus-alle-icon img { width: 20px; height: 20px; }
+
+/* Bewertung */
+.bewertung {
+  display: flex; flex-direction: column; gap: var(--space-12); padding: 18px;
+  border-radius: 22px; background: var(--surface-cream);
+}
+.bewertung h2 { margin: 0; }
+.bewertung-zeile { display: flex; align-items: center; gap: var(--space-12); }
+.bewertung-initiale {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 18px; background: var(--surface);
+  display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: var(--brand-text);
+}
+.bewertung-name { flex: 1; font-size: 15px; font-weight: 600; }
+.bewertung-notizen { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-8); }
+.bewertung-notizen li {
+  display: flex; flex-direction: column; gap: 2px; padding: var(--space-12) var(--space-14);
+  border-radius: 14px; background: var(--surface); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.sterne { display: inline-flex; align-items: center; }
+.stern { fill: none; stroke: var(--star-empty); stroke-width: 1.6; stroke-linejoin: round; }
+.stern.voll { fill: var(--star); stroke: var(--star); }
+.stern-knopf {
+  width: 36px; height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.stern-knopf:disabled { cursor: default; opacity: 0.7; }
+.stern-knopf:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 8px; }
+.kg-sterne-klein { color: var(--brand-text); font-weight: 600; white-space: nowrap; }
+
+/* Gekocht im Kochmodus */
+.kochmodus-gekocht { display: flex; flex-direction: column; gap: var(--space-16); }
+.kochmodus-gekocht h2 { margin: 0; }
+.gekocht-sterne { display: flex; flex-direction: column; gap: var(--space-6); }
+.gekocht-sterne .stern-knopf { width: 48px; height: 52px; }
+.gekocht-notiz { display: flex; flex-direction: column; gap: var(--space-6); }
+.gekocht-notiz textarea {
+  width: 100%; box-sizing: border-box; padding: var(--space-12) var(--space-14); border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-field); font-family: inherit; font-size: 16px; color: var(--ink); background: var(--surface); resize: vertical;
+}
+.gekocht-notiz textarea:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.kochmodus-gekocht .knopf-reihe .kg-btn { flex: 1; }

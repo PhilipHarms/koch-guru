@@ -60,6 +60,9 @@ def recipe_json(recipe: Recipe) -> dict[str, Any]:
         "emoji": recipe.emoji,
         "image": image_path(recipe),
         "created": recipe.created,
+        "last_cooked": recipe.last_cooked,
+        "ratings": dict(recipe.ratings),
+        "note": recipe.note,
     }
 
 
@@ -87,6 +90,8 @@ async def list_recipes(request: Request) -> dict[str, Any]:
     return {
         "recipes": [recipe_json(r) for r in recipes],
         "week_supported": repo.supports_this_week,
+        "people": repo.people,  # who can rate, in order
+        "cooked_supported": repo.supports_cooked,
     }
 
 
@@ -380,3 +385,40 @@ async def add_extra(item: ExtraItem, request: Request) -> dict[str, Any]:
     if not repo.ingredient_fields.extra:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Eigene Artikel gehen erst, wenn es das Feld „Extra“ gibt.")
     return item_json(await repo.add_extra(name))
+
+
+# --- Cooked and rated ------------------------------------------------------------------
+
+
+class Cooked(BaseModel):
+    stars: int | None = Field(default=None, ge=1, le=5)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/recipes/{recipe_id}/cooked")
+async def mark_cooked(
+    recipe_id: str, body: Cooked, request: Request, user: str = Depends(current_user)
+) -> dict[str, Any]:
+    """"Gekocht": today as "Zuletzt gekocht", and the signed-in person's stars and note."""
+    repo = repo_of(request)
+    if not repo.supports_cooked:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Rezeptdatenbank hat kein Feld „Zuletzt gekocht“.")
+    recipe = await find_recipe(repo, recipe_id)
+    await repo.mark_cooked(recipe.id, person=display_name(user), today=today(), stars=body.stars, note=body.note)
+    return recipe_json(await find_recipe(repo, recipe.id))
+
+
+class Rating(BaseModel):
+    stars: int = Field(ge=0, le=5)  # 0 removes the rating
+
+
+@router.put("/recipes/{recipe_id}/rating")
+async def rate(recipe_id: str, body: Rating, request: Request, user: str = Depends(current_user)) -> dict[str, Any]:
+    """The signed-in person's own stars; nobody rates for the other."""
+    repo = repo_of(request)
+    person = display_name(user)
+    if person not in repo.people:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Die Rezeptdatenbank hat kein Feld „Bewertung {person}“.")
+    recipe = await find_recipe(repo, recipe_id)
+    await repo.set_rating(recipe.id, person, body.stars or None)
+    return recipe_json(await find_recipe(repo, recipe.id))
