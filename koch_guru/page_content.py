@@ -275,14 +275,40 @@ def _step_mentions(words: list[str], text: str, head: str) -> bool:
     return any(len(w) >= 4 and head.endswith(w) for w in words)
 
 
-def ingredients_in_step(text: str, items: list[dict[str, Any]]) -> list[int]:
-    """Positions in `items` of the ingredients a step mentions, for amounts next to the step."""
+def _ingredient_groups(items: list[dict[str, Any]]) -> list[tuple[list[str], list[int]]]:
+    """(nouns of the group label, positions of its ingredients) for each labelled group."""
+    groups: list[tuple[list[str], list[int]]] = []
+    for index, item in enumerate(items):
+        if "group" in item:
+            groups.append((_heads(item["group"]), []))
+        elif groups:
+            groups[-1][1].append(index)
+    return [(heads, members) for heads, members in groups if heads and members]
+
+
+def ingredients_in_step(text: str, items: list[dict[str, Any]], context: str = "") -> list[int]:
+    """Positions in `items` of the ingredients a step mentions, for amounts next to the step.
+
+    When the step (or the step heading in `context`) names a group of the ingredient list,
+    like "Für die Guacamole …", only that group counts, if the step mentions any of it:
+    a chilli in the filling, the salsa and the guacamole is then shown once, not three times.
+    """
     folded, words = fold(text), _words(text)
-    return [
+    found = [
         index
         for index, item in enumerate(items)
         if "name" in item and any(_step_mentions(words, folded, head) for head in _heads(item["name"]))
     ]
+    about = f"{context} {text}"
+    about_folded, about_words = fold(about), _words(about)
+    named = {
+        index
+        for heads, members in _ingredient_groups(items)
+        if any(_step_mentions(about_words, about_folded, head) for head in heads)
+        for index in members
+    }
+    in_group = [index for index in found if index in named]
+    return in_group or found
 
 
 class IconFinder:
@@ -610,8 +636,11 @@ def parse_content(
         items.pop()
     while steps and "group" in steps[-1]:
         steps.pop()
+    step_group = ""
     for step in steps:
-        if "text" in step and (uses := ingredients_in_step(step["text"], items)):
+        if "group" in step:
+            step_group = step["group"]
+        elif uses := ingredients_in_step(step["text"], items, step_group):
             step["uses"] = uses
 
     return {
