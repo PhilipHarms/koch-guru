@@ -6,7 +6,7 @@ import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
-import { cookedLabel, localToday } from '../lib/cooked';
+import { cookedLabel } from '../lib/cooked';
 import { Stars } from '../components/Stars';
 import { RecipeImage } from '../components/RecipeImage';
 import { ExternIcon, GekochtIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
@@ -240,13 +240,13 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
 
 const NOTE_LINE = /^(\d{2}\.\d{2}\.\d{4}) ([^:]{1,40}): (.*)$/;
 
-/** Both of your stars, your own ones to tap; the notes from "Gekocht", newest first. */
+/** Both of your stars, your own ones to tap; the notes from the cooking mode, newest first. */
 function Rating({ recipe }: { recipe: Recipe }) {
-  const { me, people, cookedSupported, updateRecipe } = useData();
+  const { me, people, updateRecipe } = useData();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allNotes, setAllNotes] = useState(false);
-  if (people.length === 0 && !cookedSupported) return null;
+  if (people.length === 0 && !recipe.note) return null;
 
   const run = async (call: () => Promise<Recipe>) => {
     setBusy(true);
@@ -261,7 +261,6 @@ function Rating({ recipe }: { recipe: Recipe }) {
   };
   const notes = (recipe.note ?? '').split('\n').filter((line) => line.trim()).reverse();
   const shown = allNotes ? notes : notes.slice(0, 3);
-  const cookedToday = recipe.last_cooked === localToday();
 
   return (
     <section class="bewertung" aria-labelledby="bewertung-titel">
@@ -294,11 +293,6 @@ function Rating({ recipe }: { recipe: Recipe }) {
       {notes.length > 3 && (
         <button type="button" class="neu-generieren" onClick={() => setAllNotes(!allNotes)}>
           {allNotes ? 'Weniger Notizen' : `Alle ${notes.length} Notizen`}
-        </button>
-      )}
-      {cookedSupported && !cookedToday && (
-        <button type="button" class="neu-generieren" disabled={busy} onClick={() => run(() => api.cooked(recipe.id, {}))}>
-          <GekochtIcon size={16} />Heute gekocht
         </button>
       )}
       {error && <p class="fehler" role="alert">{error}</p>}
