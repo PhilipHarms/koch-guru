@@ -259,3 +259,4 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .kg-check input:disabled { cursor: default; }
 .einkauf .kg-check-emoji { font-family: var(--font-display); font-weight: 600; color: var(--ink-muted); }
 .einkauf .kg-check-emoji img { width: 24px; height: 24px; }
+.einkauf-filter { grid-template-columns: repeat(3, minmax(0, 1fr)); }
