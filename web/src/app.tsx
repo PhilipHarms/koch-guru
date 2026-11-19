@@ -11,6 +11,7 @@ import { TodayRoute } from './pages/Today';
 import { ShoppingRoute } from './pages/Shopping';
 import { CookRoute } from './pages/Cook';
 import { ImportRoute } from './pages/Import';
+import { EditRoute } from './pages/Edit';
 import { PlaceholderPage } from './pages/Placeholder';
 import { BrandScreen } from './pages/Status';
 
@@ -91,6 +92,7 @@ export function App() {
             <Route path="/rezepte/neu" component={ImportRoute} />
             <Route path="/rezepte/:id" component={RecipeRoute} />
             <Route path="/rezepte/:id/kochen" component={CookRoute} />
+            <Route path="/rezepte/:id/bearbeiten" component={EditRoute} />
             <Route path="/woche" component={WeekRoute} />
             <Route path="/einkauf" component={ShoppingRoute} />
             <Route default component={NotFoundRoute} />

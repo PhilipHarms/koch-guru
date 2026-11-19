@@ -126,7 +126,6 @@ export function ImportPage() {
                 <input id="rezept-link" type="url" inputMode="url" placeholder="https://…" value={link} autocomplete="off"
                   onInput={(e) => setLink((e.target as HTMLInputElement).value)} />
               </span>
-              <p class="text-klein muted">Klappt mit den meisten Rezeptseiten. Instagram und TikTok kann KochGuru leider nicht lesen.</p>
             </div>
           ) : (
             <div class="import-feld">

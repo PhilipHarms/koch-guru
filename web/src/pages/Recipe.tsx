@@ -1,5 +1,5 @@
 import { Fragment, type ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import { api, type Block, type GeneratedRecipe, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
 import { useData } from '../lib/data';
@@ -11,8 +11,7 @@ import { chooseServings, chosenServings, scaleAmount, servingsCount } from '../l
 import { Stars } from '../components/Stars';
 import { RecipeImage } from '../components/RecipeImage';
 import { IngredientChoice, initialOf } from '../components/IngredientChoice';
-import { preparePhoto } from '../lib/photos';
-import { ExternIcon, GekochtIcon, KameraIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { ExternIcon, GekochtIcon, StiftIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { shortName } from './Cook';
 import { PlaceholderPage } from './Placeholder';
 
@@ -79,7 +78,6 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         <button type="button" class="kg-iconbtn kg-iconbtn-schwebend rezept-zurueck" aria-label="Zurück" onClick={goBack}>
           <ZurueckIcon />
         </button>
-        <CoverButton recipe={recipe} />
       </div>
 
       <div class="rezept-inhalt">
@@ -129,6 +127,9 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
             <a class="rezept-link" href={recipe.notion_url} target="_blank" rel="noopener noreferrer">
               <ExternIcon size={18} />In Notion
             </a>
+            <a class="rezept-link" href={`${recipePath(recipe)}/bearbeiten`}>
+              <StiftIcon size={18} />Bearbeiten
+            </a>
           </div>
         </div>
 
@@ -162,38 +163,6 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         )}
       </div>
     </main>
-  );
-}
-
-/** Take or pick an own photo as the cover in Notion. */
-function CoverButton({ recipe }: { recipe: Recipe }) {
-  const { updateRecipe } = useData();
-  const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const upload = async (file: File | undefined) => {
-    if (!file) return;
-    setBusy(true);
-    setError(null);
-    try {
-      updateRecipe(await api.setCover(recipe.id, await preparePhoto(file, 1600)));
-    } catch (e) {
-      setError(messageOf(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <button type="button" class="kg-btn kg-iconbtn-schwebend rezept-foto" disabled={busy} onClick={() => input.current?.click()}>
-        <KameraIcon size={18} />{busy ? 'Lädt hoch …' : recipe.image ? 'Foto ändern' : 'Foto hinzufügen'}
-      </button>
-      <input ref={input} class="kg-sr" type="file" accept="image/*" tabIndex={-1}
-        onChange={(e) => { const el = e.target as HTMLInputElement; upload(el.files?.[0]); el.value = ''; }} />
-      {error && <p class="fehler rezept-foto-fehler" role="alert">{error}</p>}
-    </>
   );
 }
 

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from notion_client import APIErrorCode, APIResponseError
 from pydantic import BaseModel, Field
 
 from koch_guru.llm import ModelError
@@ -27,6 +28,7 @@ from koch_guru.services.importer import (
     Photo,
     RecipeDraft,
     RecipeImportError,
+    clean_emoji,
     filter_tags,
     import_from_photos,
     import_from_url,
@@ -306,16 +308,86 @@ async def save_generated_recipe(recipe_id: str, body: GeneratedSave, request: Re
 
 
 class RecipeUpdate(BaseModel):
-    this_week: bool
+    """Only the fields sent are changed. `emoji` or `link` as null or "" remove them."""
+
+    this_week: bool | None = None
+    name: str | None = Field(default=None, max_length=200)
+    emoji: str | None = Field(default=None, max_length=16)
+    tags: list[str] | None = Field(default=None, max_length=30)
+    origin: list[str] | None = Field(default=None, max_length=10)
+    link: str | None = Field(default=None, max_length=2000)
+
+
+def clean_values(values: list[str]) -> list[str]:
+    """Trimmed, without empty entries and duplicates; Notion options may not contain commas."""
+    result: list[str] = []
+    for value in values:
+        value = " ".join(value.replace(",", " ").split())[:100]
+        if value and value.casefold() not in {v.casefold() for v in result}:
+            result.append(value)
+    return result
 
 
 @router.patch("/recipes/{recipe_id}")
 async def update_recipe(recipe_id: str, update: RecipeUpdate, request: Request) -> dict[str, Any]:
     repo = repo_of(request)
-    if not repo.supports_this_week:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Datenbank hat keine Wochenliste")
     recipe = await find_recipe(repo, recipe_id)
-    await repo.set_this_week(recipe.id, update.this_week)
+    sent = update.model_fields_set
+    if "this_week" in sent and update.this_week is not None:
+        if not repo.supports_this_week:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Datenbank hat keine Wochenliste")
+        await repo.set_this_week(recipe.id, update.this_week)
+
+    changes: dict[str, Any] = {}
+    if "name" in sent and update.name is not None:
+        name = " ".join(update.name.split())
+        if not name:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Das Rezept braucht einen Namen.")
+        changes["name"] = name
+    if "emoji" in sent:
+        wanted = (update.emoji or "").strip()
+        emoji = clean_emoji(wanted)
+        if wanted and not emoji:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Bitte genau ein Emoji eingeben.")
+        changes["emoji"] = emoji
+    if "tags" in sent and update.tags is not None:
+        changes["tags"] = clean_values(update.tags)
+    if "origin" in sent and update.origin is not None:
+        changes["origin"] = clean_values(update.origin)
+    if "link" in sent:
+        wanted = (update.link or "").strip()
+        link = web_link(wanted)
+        if wanted and not link:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Der Link muss mit http:// oder https:// beginnen."
+            )
+        changes["link"] = link
+    if changes:
+        try:
+            await repo.update_details(recipe.id, **changes)
+        except APIResponseError as exc:
+            if exc.code == APIErrorCode.ValidationError and "emoji" in changes:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="Notion hat das Emoji nicht angenommen. Versuch ein anderes.",
+                ) from exc
+            raise
+    return recipe_json(await find_recipe(repo, recipe.id))
+
+
+@router.get("/recipe-fields")
+async def recipe_fields(request: Request) -> dict[str, Any]:
+    """What can be edited, with the tag and cookbook options from Notion."""
+    repo = repo_of(request)
+    await repo.list_recipes()
+    return repo.editable_fields
+
+
+@router.delete("/recipes/{recipe_id}/cover")
+async def remove_cover(recipe_id: str, request: Request) -> dict[str, Any]:
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    await repo.remove_cover(recipe.id)
     return recipe_json(await find_recipe(repo, recipe.id))
 
 

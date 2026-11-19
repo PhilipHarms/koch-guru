@@ -685,3 +685,73 @@ def test_own_photo_as_cover():
     assert data["image"].startswith(f"/api/recipes/{PASTA_ID.replace('-', '')}/image?v=")
     assert c.put(f"/api/recipes/{PASTA_ID}/cover", json={"data": "eA==", "type": "text/plain"}).status_code == 422
     assert client(repo).put(f"/api/recipes/{PASTA_ID}/cover", json={"data": "eA==", "type": "image/png"}).status_code == 401
+
+
+# --- Bearbeiten -------------------------------------------------------------------------
+
+class EditRepo(ImportRepo):
+    editable_fields = {"tags": {"options": ["Veggie", "Winter"], "multiple": True},
+                       "origin": {"options": ["Green Feast"], "multiple": False}, "link": True}
+
+    def __init__(self):
+        super().__init__()
+        self.details = []
+        self.removed = []
+
+    async def update_details(self, page_id, **changes):
+        self.details.append((page_id, changes))
+        renamed = {"name": "name", "emoji": "emoji", "link": "url"}
+        self._set(page_id, **{renamed.get(k, k): tuple(v) if isinstance(v, list) else v for k, v in changes.items()})
+
+    async def remove_cover(self, page_id):
+        self.removed.append(page_id)
+        self._set(page_id, cover=None)
+
+
+def test_edit_recipe_fields():
+    repo = EditRepo()
+    c = signed_in(repo)
+    data = c.patch(f"/api/recipes/{DAL_ID}", json={
+        "name": "  Kürbis-Dal   mit Kokos ", "emoji": "🎃", "tags": ["Veggie", " Schnell ", "veggie", "", "a,b"],
+        "origin": ["Green Feast"], "link": " https://example.org/neu "}).json()
+    assert repo.details == [(DAL_ID, {"name": "Kürbis-Dal mit Kokos", "emoji": "🎃", "tags": ["Veggie", "Schnell", "a b"],
+                                      "origin": ["Green Feast"], "link": "https://example.org/neu"})]
+    assert data["name"] == "Kürbis-Dal mit Kokos" and data["emoji"] == "🎃" and data["tags"] == ["Veggie", "Schnell", "a b"]
+    assert data["source_url"] == "https://example.org/neu"
+    assert repo.updates == []  # "This Week?" untouched
+
+    # Only what is sent changes; empty emoji and link remove them.
+    c.patch(f"/api/recipes/{DAL_ID}", json={"emoji": "", "link": None})
+    assert repo.details[-1] == (DAL_ID, {"emoji": None, "link": None})
+
+
+def test_edit_recipe_rejects_bad_values():
+    c = signed_in(EditRepo())
+    assert c.patch(f"/api/recipes/{DAL_ID}", json={"name": "   "}).status_code == 422
+    answer = c.patch(f"/api/recipes/{DAL_ID}", json={"emoji": "Suppe"})
+    assert answer.status_code == 422 and "Emoji" in answer.json()["detail"]
+    assert c.patch(f"/api/recipes/{DAL_ID}", json={"link": "instagram"}).status_code == 422
+
+
+def test_week_toggle_still_works_alone():
+    repo = EditRepo()
+    signed_in(repo).patch(f"/api/recipes/{PASTA_ID}", json={"this_week": True})
+    assert repo.updates == [(PASTA_ID, True)] and repo.details == []
+
+
+def test_notion_rejecting_the_emoji():
+    class Picky(EditRepo):
+        async def update_details(self, page_id, **changes):
+            raise APIResponseError(code=APIErrorCode.ValidationError, status=400, message="icon",
+                                   headers=httpx.Headers(), raw_body_text="")
+    answer = signed_in(Picky()).patch(f"/api/recipes/{DAL_ID}", json={"emoji": "🫠"})
+    assert answer.status_code == 422 and "Emoji" in answer.json()["detail"]
+
+
+def test_fields_and_remove_cover():
+    repo = EditRepo()
+    c = signed_in(repo)
+    assert c.get("/api/recipe-fields").json()["origin"] == {"options": ["Green Feast"], "multiple": False}
+    assert c.delete(f"/api/recipes/{DAL_ID}/cover").json()["image"] is None
+    assert repo.removed == [DAL_ID]
+    assert client(repo).get("/api/recipe-fields").status_code == 401

@@ -681,6 +681,99 @@ class RecipeRepository:
             self._cache = None  # not cached or no address in the answer: read the page again
         return updated
 
+    async def remove_cover(self, page_id: str) -> None:
+        await self._client.pages.update(page_id=page_id, cover=None)
+        if self._replace_cached(page_id, cover=None) is None:
+            self._cache = None
+
+    # --- Editing the recipe's own fields ----------------------------------------------
+
+    @property
+    def editable_fields(self) -> dict[str, Any]:
+        """What the edit screen can change, with the options from Notion."""
+        m = self._mapping
+        if m is None:
+            return {"tags": None, "origin": None, "link": False}
+
+        def field(prop: str | None, kind: str | None, options: tuple[str, ...]) -> dict[str, Any] | None:
+            if not prop or kind not in ("multi_select", "select", "rich_text"):
+                return None
+            return {"options": list(options), "multiple": kind != "select"}
+
+        return {
+            "tags": field(m.tags, m.tags_type, m.tag_options),
+            "origin": field(m.origin, m.origin_type, m.origin_options),
+            "link": bool(m.link),
+        }
+
+    async def update_details(self, page_id: str, **changes: Any) -> Recipe | None:
+        """Change name, emoji, tags, origin or link. Only the keys given are changed.
+
+        `emoji` or `link` set to None remove them. New tags and cookbooks become new
+        options in Notion. Returns the recipe as cached afterwards.
+        """
+        if self._mapping is None:
+            await self.connect()
+        m = self._mapping
+        assert m
+        props: dict[str, Any] = {}
+        if "name" in changes:
+            props[m.title] = {"title": [_text(changes["name"])]}
+        if "tags" in changes and m.tags:
+            props[m.tags] = _list_property(m.tags_type, changes["tags"]) if changes["tags"] else _empty_list(m.tags_type)
+        if "origin" in changes and m.origin:
+            origin = changes["origin"]
+            props[m.origin] = _list_property(m.origin_type, origin) if origin else _empty_list(m.origin_type)
+        if "link" in changes and m.link:
+            props[m.link] = {"url": changes["link"] or None}
+        kwargs: dict[str, Any] = {"properties": props} if props else {}
+        if "emoji" in changes:
+            kwargs["icon"] = {"type": "emoji", "emoji": changes["emoji"]} if changes["emoji"] else None
+        if not kwargs:
+            return next((r for r in await self.list_recipes() if r.id == page_id), None)
+        page = await self._client.pages.update(page_id=page_id, **kwargs)
+
+        # The answer is the updated page; fall back to what was sent where it lacks a field.
+        got = page.get("properties") or {}
+
+        def values(prop: str | None, kind: str | None, sent: list[str]) -> tuple[str, ...]:
+            if prop in got:
+                return _list_values(got[prop])
+            if kind == "rich_text":
+                return (", ".join(sent),) if sent else ()
+            return tuple(sent[:1] if kind == "select" else sent)
+
+        cached: dict[str, Any] = {}
+        if "name" in changes:
+            cached["name"] = _plain_text(got.get(m.title, {}).get("title")) or changes["name"]
+        if "tags" in changes and m.tags:
+            cached["tags"] = values(m.tags, m.tags_type, changes["tags"])
+            self._remember_options("tag_options", cached["tags"])
+        if "origin" in changes and m.origin:
+            cached["origin"] = values(m.origin, m.origin_type, changes["origin"])
+            self._remember_options("origin_options", cached["origin"])
+        if "link" in changes and m.link:
+            cached["url"] = (got.get(m.link) or {}).get("url") if m.link in got else changes["link"] or None
+        if "emoji" in changes:
+            cached["emoji"] = _page_emoji(page) if "icon" in page else changes["emoji"] or None
+        updated = self._replace_cached(page_id, **cached)
+        if updated is None:
+            self._cache = None
+        return updated
+
+    def _remember_options(self, field_name: str, values: Sequence[str]) -> None:
+        """New tags or cookbooks are options in Notion now; offer them next time too."""
+        if self._mapping is None or self._mapping_kind(field_name) == "rich_text":
+            return
+        known = getattr(self._mapping, field_name)
+        added = tuple(v for v in values if v not in known)
+        if added:
+            self._mapping = dataclasses.replace(self._mapping, **{field_name: known + added})
+
+    def _mapping_kind(self, field_name: str) -> str | None:
+        assert self._mapping
+        return self._mapping.tags_type if field_name == "tag_options" else self._mapping.origin_type
+
     # --- Filling a page with a generated recipe -------------------------------------
 
     async def save_generated(
@@ -973,6 +1066,14 @@ def draft_properties(draft: RecipeDraft, mapping: PropertyMapping) -> dict[str, 
     if mapping.origin and draft.origin:
         props[mapping.origin] = _list_property(mapping.origin_type, draft.origin)
     return props
+
+
+def _empty_list(kind: str | None) -> dict[str, Any]:
+    if kind == "multi_select":
+        return {"multi_select": []}
+    if kind == "select":
+        return {"select": None}
+    return {"rich_text": []}
 
 
 def _list_property(kind: str | None, values: list[str]) -> dict[str, Any]:
