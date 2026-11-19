@@ -4,10 +4,11 @@ import { useLocation } from 'preact-iso';
 import { api, type Block, type GeneratedIngredient, type GeneratedRecipe, type Recipe, type RecipeContent, type TextRun } from '../lib/api';
 import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
-import { messageOf, sameId, sourceLink, sourceOf } from '../lib/recipe';
+import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
-import { ExternIcon, HakenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { ExternIcon, HakenIcon, KochenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { shortName } from './Cook';
 import { PlaceholderPage } from './Placeholder';
 
 type Loadable<T> = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; value: T };
@@ -92,6 +93,11 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
         </header>
 
         <div class="rezept-aktionen">
+          {ready && ready.steps.some((step) => 'text' in step) && (
+            <a class="kg-btn kg-btn-gross kg-btn-primaer rezept-kochen" href={`${recipePath(recipe)}/kochen`}>
+              <KochenIcon size={20} />Kochmodus starten
+            </a>
+          )}
           {weekSupported && (
             <button type="button" class="kg-btn kg-btn-gross kg-btn-sekundaer rezept-woche" aria-pressed={recipe.this_week}
               disabled={saving} onClick={toggleWeek}>
@@ -208,7 +214,10 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
             return (
               <li key={index} class="schritt">
                 <span class="schritt-nummer" aria-hidden="true">{number}</span>
-                <p class="fliesstext">{step.text}</p>
+                <div class="schritt-inhalt">
+                  <p class="fliesstext">{step.text}</p>
+                  {step.uses && step.uses.length > 0 && <StepAmounts content={content} uses={step.uses} />}
+                </div>
               </li>
             );
           })}
@@ -220,6 +229,15 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
       )}
     </section>
   );
+}
+
+/** Quietly, what the step needs: "600 g Süßkartoffeln · 1 Zwiebel". */
+function StepAmounts({ content, uses }: { content: RecipeContent; uses: number[] }) {
+  const parts = [...new Set(uses.flatMap((i) => {
+    const item = content.ingredients[i];
+    return item && 'name' in item ? [`${item.amount ? `${item.amount} ` : ''}${shortName(item.name)}`] : [];
+  }))];
+  return parts.length ? <p class="schritt-mengen meta muted">{parts.join(' · ')}</p> : null;
 }
 
 // --- Rezept generieren -----------------------------------------------------------------

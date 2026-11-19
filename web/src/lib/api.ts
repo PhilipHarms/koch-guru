@@ -29,7 +29,8 @@ export type Block =
 
 /** `icon` is an image address (Notion's own icons) when the ingredient has no emoji. */
 export type Ingredient = { name: string; amount: string | null; emoji: string | null; icon?: string } | { group: string };
-export type Step = { text: string } | { group: string };
+/** `uses`: positions in `ingredients` of what the step mentions. */
+export type Step = { text: string; uses?: number[] } | { group: string };
 
 export type RecipeContent = {
   minutes: number | null;
