@@ -139,6 +139,7 @@ class FakeNotion:
         self.schema_updates = []
         self.reject_schema_updates = False
         self.bought = {"ing-2"}
+        self.ingredient_tags = {}
 
     @staticmethod
     def error(status, code):
@@ -174,7 +175,12 @@ class FakeNotion:
         if path == f"/v1/data_sources/{ING_DS}/query":
             if not self.ingredients_shared:
                 return self.error(404, "object_not_found")
-            return self.paginate([ingredient_page(k, v, k in self.bought) for k, v in INGREDIENTS.items()], request)
+            pages = [ingredient_page(k, v, k in self.bought) for k, v in INGREDIENTS.items()]
+            for p in pages:
+                if p["id"] in self.ingredient_tags:
+                    p["properties"]["Tags"] = {"type": "multi_select",
+                                               "multi_select": [{"name": t} for t in self.ingredient_tags[p["id"]]]}
+            return self.paginate(pages, request)
         if path.startswith("/v1/blocks/") and path.endswith("/children") and request.method == "GET":
             block_id = path.split("/")[3]
             self.block_calls.append(block_id)
@@ -594,3 +600,29 @@ async def test_save_generated_only_unlinks():
     await repo.save_generated("page-1", draft=draft, link=[], unlink_ids=["ing-2"])
     assert fake.appended_after == [None] and fake.deleted == []
     assert fake.updates[-1][1]["properties"]["Ingredients"]["relation"] == [{"id": "ing-1"}]
+
+
+async def test_aisles_come_from_the_ingredient_tags_in_notion_order():
+    fake = FakeNotion(total=1)
+    fake.ingredient_schema["Tags"] = {"type": "multi_select", "multi_select": {"options": [
+        {"name": "Obst & Gemüse"}, {"name": "Gewürze"}, {"name": "Milchprodukt"}]}}
+    fake.ingredient_tags = {"ing-1": ["Milchprodukt", "Gewürze"], "ing-3": ["Obst & Gemüse"]}
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    assert repo.ingredient_fields.aisles == ("Obst & Gemüse", "Gewürze", "Milchprodukt")
+    # Two tags: the one that comes first in Notion counts.
+    assert {i.name: i.aisle for i in repo.ingredients.values()} == {
+        "Gelbe Linsen": "Gewürze", "Kurkuma": None, "Süßkartoffel": "Obst & Gemüse"}
+
+
+async def test_new_ingredient_gets_its_aisle_tag():
+    fake = FakeNotion(total=3)
+    fake.ingredient_schema["Tags"] = {"type": "multi_select", "multi_select": {"options": [{"name": "Gemüse"}]}}
+    fake.pages[1] = page(1, "Rezept 001", ingredients=[])
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    await repo.link_ingredients("page-1", [("Pak Choi", "🥬", "Gemüse"), ("Tofu", None, "Gibt es nicht")])
+    created = {b["properties"]["Name"]["title"][0]["text"]["content"]: b["properties"]
+               for b in fake.created if b["parent"].get("data_source_id") == ING_DS}
+    assert created["Pak Choi"]["Tags"] == {"multi_select": [{"name": "Gemüse"}]}
+    assert "Tags" not in created["Tofu"]  # no new tags from the model

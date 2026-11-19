@@ -14,7 +14,7 @@ PASTA = Recipe(id="r-pasta", name="Pasta", notion_url="n", ingredients=("Nudeln"
 INGREDIENTS = {i.id: i for i in [
     Ingredient("i-kuerbis", "Kürbis", icon="🎃"),
     Ingredient("i-linsen", "Rote Linsen", bought=True, bought_on="2026-10-01"),
-    Ingredient("i-tomaten", "Tomaten", icon="🍅"),
+    Ingredient("i-tomaten", "Tomaten", icon="🍅", aisle="Gemüse"),
     Ingredient("i-eier", "Eier"),
     Ingredient("i-nudeln", "Nudeln"),
     Ingredient("i-spueli", "Spülmittel", extra=True),
@@ -74,3 +74,10 @@ def test_amounts_come_from_the_ingredient_lines_of_the_page():
 
 def test_today_is_a_date():
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", today())
+
+
+def test_items_carry_their_aisle_and_the_list_the_aisle_order():
+    result = shopping_list([DAL], INGREDIENTS, {}, today="2026-11-18", can_check=True, can_add=True,
+                           aisles=("Gemüse", "Milchprodukt"))
+    assert result["aisles"] == ["Gemüse", "Milchprodukt"]
+    assert {i["name"]: i["aisle"] for i in result["groups"][0]["items"]}["Tomaten"] == "Gemüse"

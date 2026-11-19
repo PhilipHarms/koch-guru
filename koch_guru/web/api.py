@@ -212,6 +212,7 @@ async def generate_recipe(recipe_id: str, request: Request, body: GenerateReques
             llm=llm,
             known=repo.ingredient_names,
             linked=list(recipe.ingredients),
+            aisles=repo.ingredient_fields.aisles,
         )
     except RecipeImportError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
@@ -241,6 +242,7 @@ class GeneratedLine(BaseModel):
     zutat: str = Field(default="", max_length=100)
     emoji: str | None = Field(default=None, max_length=16)
     link: bool = False
+    aisle: str | None = Field(default=None, max_length=100)  # tag for a new ingredient
 
 
 class GeneratedSave(BaseModel):
@@ -269,7 +271,7 @@ async def save_generated_recipe(recipe_id: str, body: GeneratedSave, request: Re
         servings=(body.servings or "").strip() or None,
         total_minutes=body.minutes or None,
     )
-    links = [(i.zutat.strip(), i.emoji) for i in body.ingredients if i.link and i.zutat.strip()]
+    links = [(i.zutat.strip(), i.emoji, i.aisle) for i in body.ingredients if i.link and i.zutat.strip()]
     may_set_cover = not recipe.cover or body.replace_cover
     cover = body.cover if body.cover and body.cover.startswith("https://") and may_set_cover else None
     # Found again on the fresh page, so nothing else gets deleted.
@@ -341,6 +343,7 @@ async def get_shopping_list(request: Request) -> dict[str, Any]:
         today=today(),
         can_check=bool(fields.bought),
         can_add=bool(fields.extra),
+        aisles=fields.aisles,
     )
 
 

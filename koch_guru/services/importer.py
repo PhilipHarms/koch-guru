@@ -54,6 +54,7 @@ class IngredientLink:
     name: str  # exactly as in the database, or a new name
     emoji: str | None = None
     new: bool = False  # not in the database yet
+    aisle: str | None = None  # supermarket aisle (tag) for a new ingredient
 
 
 @dataclass

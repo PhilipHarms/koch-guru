@@ -10,6 +10,38 @@ import { PlusIcon } from '../components/icons';
 const FILTERS = ['alle', 'fehlend', 'lager'] as const;
 type Filter = (typeof FILTERS)[number];
 const FILTER_LABEL: Record<Filter, string> = { alle: 'Alle', fehlend: 'Fehlend', lager: 'Auf Lager' };
+const VIEWS = ['rezept', 'abteilung'] as const;
+type View = (typeof VIEWS)[number];
+const VIEW_LABEL: Record<View, string> = { rezept: 'Nach Rezept', abteilung: 'Nach Abteilung' };
+const NO_AISLE = 'Ohne Abteilung';
+
+/** One line per ingredient, with the amounts and recipes of all its lines. */
+type AisleItem = ShoppingItem & { amounts: string[]; recipes: string[] };
+
+function byAisle(list: ShoppingList, planned: Recipe[]): { aisle: string; items: AisleItem[] }[] {
+  const merged = new Map<string, AisleItem>();
+  for (const group of list.groups) {
+    const recipe = planned.find((r) => sameId(r.id, group.recipe_id));
+    for (const item of group.items) {
+      const entry = merged.get(item.id) ?? { ...item, amounts: [], recipes: [] };
+      if (item.amount) entry.amounts.push(item.amount);
+      if (recipe) entry.recipes.push(recipe.name);
+      merged.set(item.id, entry);
+    }
+  }
+  for (const item of list.extras) if (!merged.has(item.id)) merged.set(item.id, { ...item, amounts: [], recipes: [] });
+
+  const aisles = new Map<string, AisleItem[]>();
+  for (const item of merged.values()) {
+    const key = item.aisle ?? NO_AISLE;
+    aisles.set(key, [...(aisles.get(key) ?? []), item]);
+  }
+  // The order of the tags in Notion, then other tags by name, items without one last.
+  const rank = (aisle: string) => (aisle === NO_AISLE ? Infinity : list.aisles.indexOf(aisle) >= 0 ? list.aisles.indexOf(aisle) : list.aisles.length);
+  return [...aisles.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b, 'de'))
+    .map(([aisle, items]) => ({ aisle, items: items.sort((a, b) => a.name.localeCompare(b.name, 'de')) }));
+}
 
 type State = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; list: ShoppingList };
 
@@ -36,6 +68,7 @@ export function ShoppingRoute() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [hint, setHint] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>(() => loadChoice('einkauf-filter', FILTERS, 'fehlend'));
+  const [view, setView] = useState<View>(() => loadChoice('einkauf-ansicht', VIEWS, 'rezept'));
   // Lines ticked or unticked here stay in view until the filter changes, so a wrong tap can be undone.
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
 
@@ -43,6 +76,11 @@ export function ShoppingRoute() {
     setFilter(next);
     setTouched(new Set());
     saveChoice('einkauf-filter', next);
+  };
+  const chooseView = (next: View) => {
+    setView(next);
+    setTouched(new Set());
+    saveChoice('einkauf-ansicht', next);
   };
 
   useEffect(() => window.scrollTo(0, 0), []);
@@ -113,6 +151,10 @@ export function ShoppingRoute() {
     .map((g) => ({ ...g, items: g.items.filter(visible) }))
     .filter((g) => g.items.length > 0);
   const extras = list.extras.filter(visible);
+  const aisles = view === 'abteilung'
+    ? byAisle(list, planned).map((a) => ({ ...a, items: a.items.filter(visible) })).filter((a) => a.items.length > 0)
+    : [];
+  const shown = view === 'abteilung' ? aisles.length > 0 : groups.length > 0 || extras.length > 0;
   const open = openCount(list);
   const fromRecipes = planned.length === 1 ? 'Aus 1 Rezept dieser Woche' : `Aus ${planned.length} Rezepten dieser Woche`;
   const summary = planned.length === 0 && list.extras.length === 0
@@ -129,7 +171,14 @@ export function ShoppingRoute() {
       )}
 
       {(linked.length > 0 || list.extras.length > 0) && (
-        <div class="page-pad">
+        <div class="page-pad einkauf-steuerung">
+          <div class="kg-seg kg-seg-voll" role="group" aria-label="Sortierung">
+            {VIEWS.map((v) => (
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => chooseView(v)}>
+                {VIEW_LABEL[v]}
+              </button>
+            ))}
+          </div>
           <div class="kg-seg kg-seg-voll einkauf-filter" role="group" aria-label="Zutaten zeigen">
             {FILTERS.map((f) => (
               <button key={f} type="button" aria-pressed={filter === f} onClick={() => chooseFilter(f)}>
@@ -140,7 +189,7 @@ export function ShoppingRoute() {
         </div>
       )}
 
-      {(linked.length > 0 || list.extras.length > 0) && groups.length === 0 && extras.length === 0 && (
+      {(linked.length > 0 || list.extras.length > 0) && !shown && (
         <p class="page-pad text-klein muted">
           {filter === 'fehlend' ? 'Es fehlt nichts. Alles für die Rezepte der Woche ist da.' : 'Noch nichts auf Lager.'}
         </p>
@@ -156,7 +205,20 @@ export function ShoppingRoute() {
         </div>
       )}
 
-      {groups.map(({ recipe, items }) => (
+      {view === 'abteilung' && aisles.map(({ aisle, items }) => (
+        <section key={aisle} class="einkauf-gruppe page-pad" aria-label={aisle}>
+          <h2 class="einkauf-kopf einkauf-abteilung">{aisle}</h2>
+          <ul class="einkauf-liste">
+            {items.map((item) => (
+              <Line key={item.id} item={item} prefix={`abteilung-${aisle}`} disabled={!list.can_check} onToggle={toggle}
+                amount={item.amounts.join(' + ') || null}
+                note={item.recipes.length ? `für ${item.recipes.join(', ')}` : 'Eigener Artikel'} />
+            ))}
+          </ul>
+        </section>
+      ))}
+
+      {view === 'rezept' && groups.map(({ recipe, items }) => (
         <section key={recipe.id} class="einkauf-gruppe page-pad" aria-label={recipe.name}>
           <h2 class="einkauf-kopf">
             <RecipeImage recipe={recipe} size="gruppe" />
@@ -176,7 +238,7 @@ export function ShoppingRoute() {
         </p>
       )}
 
-      {extras.length > 0 && (
+      {view === 'rezept' && extras.length > 0 && (
         <section class="einkauf-gruppe page-pad" aria-label="Eigene Artikel">
           <h2 class="einkauf-kopf">
             <span class="kg-bild kg-bild-gruppe einkauf-eigene" aria-hidden="true">🧺</span>
@@ -208,9 +270,18 @@ function Frame({ summary, children }: { summary: string; children: ComponentChil
   );
 }
 
-type LineProps = { item: ShoppingItem; prefix: string; disabled: boolean; onToggle: (item: ShoppingItem) => void };
+type LineProps = {
+  item: ShoppingItem;
+  prefix: string;
+  disabled: boolean;
+  onToggle: (item: ShoppingItem) => void;
+  /** Overrides for the aisle view: all amounts, and the recipes it is for. */
+  amount?: string | null;
+  note?: string;
+};
 
-function Line({ item, prefix, disabled, onToggle }: LineProps) {
+function Line({ item, prefix, disabled, onToggle, amount = item.amount, note }: LineProps) {
+  const hint = note ?? (item.also.length > 0 ? `auch für ${item.also.join(', ')}` : null);
   const id = `einkauf-${prefix}-${item.id}`;
   const isImage = item.icon?.startsWith('http') || item.icon?.startsWith('/');
   return (
@@ -222,9 +293,9 @@ function Line({ item, prefix, disabled, onToggle }: LineProps) {
         </span>
         <span class="kg-check-text">
           <span class="kg-check-name">{item.name}</span>
-          {item.also.length > 0 && <span class="kg-check-fuer">auch für {item.also.join(', ')}</span>}
+          {hint && <span class="kg-check-fuer">{hint}</span>}
         </span>
-        {item.amount && <span class="kg-check-menge">{item.amount}</span>}
+        {amount && <span class="kg-check-menge">{amount}</span>}
       </label>
     </li>
   );

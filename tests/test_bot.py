@@ -12,6 +12,7 @@ from koch_guru.bot.app import build_application
 from koch_guru.bot.render import week_keyboard
 from koch_guru.config import load_settings
 from koch_guru.models import Recipe
+from koch_guru.notion_repo import IngredientFields
 from koch_guru.services.conversation import ConversationStore
 from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import Pick, Selection
@@ -103,13 +104,14 @@ class FakeRepo:
         self.created = []
 
     ingredient_names = ["Süßkartoffel", "Feta", "Salz"]
+    ingredient_fields = IngredientFields(aisle="Tags", aisle_kind="multi_select", aisles=("Gemüse", "Gewürze"))
 
     async def find_existing(self, draft):
         return self.existing
 
     async def link_ingredients(self, page_id, link):
         self.linked = (page_id, list(link))
-        return [name for name, _ in link if name == "Kürbis"]  # as if it could not be created
+        return [entry[0] for entry in link if entry[0] == "Kürbis"]  # as if it could not be created
 
     async def create_recipe(self, draft):
         self.created.append(draft)
@@ -448,7 +450,8 @@ class PrepareLLM(FakeLLM):
         return PreparedRecipe(zutaten=[
             PreparedIngredient(zeile="500 g Süßkartoffeln", zutat="Süßkartoffel", emoji="🍠", immer_da=False),
             PreparedIngredient(zeile="Für den Dip:", zutat="", emoji="", immer_da=False, gruppe=True),
-            PreparedIngredient(zeile="1 Hokkaido-Kürbis", zutat="Kürbis", emoji="🎃", immer_da=False),
+            PreparedIngredient(zeile="1 Hokkaido-Kürbis", zutat="Kürbis", emoji="🎃", immer_da=False,
+                               abteilung="Gemüse"),
             PreparedIngredient(zeile="1 Prise Salz", zutat="Salz", emoji="🧂", immer_da=True),
         ], schritte=["Im Ofen backen."], portionen="2 Portionen")
 
@@ -470,7 +473,8 @@ async def test_import_links_ingredients_like_rezept_generieren(monkeypatch):
     await handlers.import_decision(update, fake_context(svc))
     (draft,) = repo.created
     assert draft.steps == ["Im Ofen backen."] and draft.servings == "2 Portionen"
-    assert repo.linked == ("neu-1", [("Süßkartoffel", "🍠"), ("Kürbis", "🎃")])  # salt is always at home
+    # Salt is always at home; the new pumpkin gets its aisle.
+    assert repo.linked == ("neu-1", [("Süßkartoffel", "🍠", None), ("Kürbis", "🎃", "Gemüse")])
     text = query.edit_message_text.call_args.args[0]
     assert "In Notion angelegt" in text and "Nicht verknüpft: Kürbis" in text
 

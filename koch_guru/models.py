@@ -43,3 +43,4 @@ class Ingredient:
     bought: bool = False  # "Bought": in the house, ticked off on the shopping list
     bought_on: str | None = None  # "Gekauft am", ISO date of the last tick
     extra: bool = False  # own item without a recipe, e.g. washing-up liquid
+    aisle: str | None = None  # supermarket aisle from the ingredient's tags, e.g. "Milchprodukt"

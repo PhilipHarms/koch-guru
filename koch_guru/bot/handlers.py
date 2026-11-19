@@ -275,7 +275,7 @@ async def photo_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def prepared(svc: Services, draft: RecipeDraft) -> RecipeDraft:
     """German lines and the ingredients to link, like "Rezept generieren" in the app."""
     await svc.repo.list_recipes()  # loads the names in the ingredients database
-    return await prepare_import(draft, svc.llm, svc.repo.ingredient_names)
+    return await prepare_import(draft, svc.llm, svc.repo.ingredient_names, svc.repo.ingredient_fields.aisles)
 
 
 async def show_draft(update: Update, svc: Services, draft: RecipeDraft) -> None:
@@ -317,7 +317,7 @@ async def import_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     recipe = await svc.repo.create_recipe(pending.draft)
-    links = [(link.name, link.emoji) for link in pending.draft.links]
+    links = [(link.name, link.emoji, link.aisle) for link in pending.draft.links]
     not_linked = await svc.repo.link_ingredients(recipe.id, links) if links else []
     saved = f"✅ In Notion angelegt: {recipe_link(recipe)}"
     if not_linked:
