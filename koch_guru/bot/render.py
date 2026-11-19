@@ -89,8 +89,9 @@ def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> s
     if draft.servings:
         facts.append(f"🍽 {escape(draft.servings)}")
 
-    shown = ", ".join(escape(i) for i in draft.ingredients[:PREVIEW_INGREDIENTS])
-    more = len(draft.ingredients) - PREVIEW_INGREDIENTS
+    items = [i for i in draft.ingredients if not i.endswith(":")]  # without group labels
+    shown = ", ".join(escape(i) for i in items[:PREVIEW_INGREDIENTS])
+    more = len(items) - PREVIEW_INGREDIENTS
     if more > 0:
         shown += f" und {more} weitere"
 
@@ -99,9 +100,13 @@ def render_draft_preview(draft: RecipeDraft, similar: Recipe | None = None) -> s
         " · ".join(facts),
         "",
         f"<b>Tags:</b> {escape(', '.join(draft.tags)) if draft.tags else 'keine passenden gefunden'}",
-        f"<b>Zutaten ({len(draft.ingredients)}):</b> {shown}",
+        f"<b>Zutaten ({len(items)}):</b> {shown}",
         "<b>Zubereitung:</b> " + (f"{len(draft.steps)} Schritte" if draft.steps else "nicht gefunden"),
     ]
+    if draft.links:
+        new = sum(1 for link in draft.links if link.new)
+        linked = f"{len(draft.links)} {'wird' if len(draft.links) == 1 else 'werden'} verknüpft"
+        lines.append(f"<b>Zutaten-Datenbank:</b> {linked}" + (f", {new} davon neu angelegt" if new else ""))
     if draft.source == "text":
         lines += ["", "<i>Aus dem Seitentext gelesen, bitte kurz prüfen.</i>"]
     elif draft.source == "photo":

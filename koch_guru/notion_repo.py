@@ -638,36 +638,54 @@ class RecipeRepository:
             except APIResponseError as exc:  # a missing photo is no reason to fail the save
                 log.warning("Titelbild nicht gesetzt: %s", exc.code)
 
+        not_created = await self.link_ingredients(page_id, link, unlink_ids=unlink_ids)
+        self._content_cache.pop(page_id, None)
+        self._cache = None  # reload ingredients and links on next access
+        return not_created
+
+    async def link_ingredients(
+        self, page_id: str, link: Sequence[tuple[str, str | None]], *, unlink_ids: Sequence[str] = ()
+    ) -> list[str]:
+        """Link ingredients to a recipe; names not in the ingredients database get a page first.
+
+        `link` holds (ingredient name, emoji). Links that are already set stay, except
+        `unlink_ids`. Returns the names that could not be created or linked.
+        """
+        if self._mapping is None:
+            await self.connect()
+        assert self._mapping
+        if self._mapping.ingredients_kind != "relation" or not self._mapping.ingredients:
+            return []
+        if self._ingredient_source is None:
+            await self.list_recipes()  # finds the ingredients database and its names
         not_created: list[str] = []
         ids: list[str] = []
-        if self._mapping.ingredients_kind == "relation" and self._mapping.ingredients:
-            by_key = {name.casefold(): page_id for name, page_id in self._ingredient_ids.items()}
-            for name, emoji in link:
-                found = by_key.get(name.casefold())
+        by_key = {name.casefold(): ingredient_id for name, ingredient_id in self._ingredient_ids.items()}
+        for name, emoji in link:
+            found = by_key.get(name.casefold())
+            if found is None:
+                found = await self._create_ingredient(name, emoji)
                 if found is None:
-                    found = await self._create_ingredient(name, emoji)
-                    if found is None:
-                        not_created.append(name)
-                        continue
-                    by_key[name.casefold()] = found
-                if found not in ids:
-                    ids.append(found)
-            if ids or unlink_ids:
-                drop = {i.replace("-", "") for i in unlink_ids}
-                try:
-                    current = await self._relation_ids(page_id, self._mapping.ingredients)
-                    kept = [i for i in current if i.replace("-", "") not in drop]
-                    merged = kept + [i for i in ids if i not in kept]
-                    if merged != current:
-                        await self._client.pages.update(
-                            page_id=page_id,
-                            properties={self._mapping.ingredients: {"relation": [{"id": i} for i in merged]}},
-                        )
-                except APIResponseError as exc:
-                    # The content is on the page already; report the links instead of failing.
-                    log.warning("Zutaten nicht verknüpft: %s", exc.code)
-                    not_created = [name for name, _ in link]
-        self._content_cache.pop(page_id, None)
+                    not_created.append(name)
+                    continue
+                by_key[name.casefold()] = found
+            if found not in ids:
+                ids.append(found)
+        if ids or unlink_ids:
+            drop = {i.replace("-", "") for i in unlink_ids}
+            try:
+                current = await self._relation_ids(page_id, self._mapping.ingredients)
+                kept = [i for i in current if i.replace("-", "") not in drop]
+                merged = kept + [i for i in ids if i not in kept]
+                if merged != current:
+                    await self._client.pages.update(
+                        page_id=page_id,
+                        properties={self._mapping.ingredients: {"relation": [{"id": i} for i in merged]}},
+                    )
+            except APIResponseError as exc:
+                # The content is on the page already; report the links instead of failing.
+                log.warning("Zutaten nicht verknüpft: %s", exc.code)
+                not_created = [name for name, _ in link]
         self._cache = None  # reload ingredients and links on next access
         return not_created
 

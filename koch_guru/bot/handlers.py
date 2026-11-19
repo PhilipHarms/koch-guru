@@ -33,6 +33,7 @@ from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
 from koch_guru.services.conversation import ConversationStore
 from koch_guru.services.drafts import DraftStore
+from koch_guru.services.generate import prepare_import
 from koch_guru.services.importer import (
     MAX_PHOTOS,
     PHOTO_TYPES,
@@ -218,10 +219,13 @@ async def import_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not url:
         return
     svc = services(context)
+
+    async def read() -> RecipeDraft:
+        draft = await import_from_url(url, svc.http, svc.llm, svc.repo.tag_options)
+        return await prepared(svc, draft)
+
     try:
-        draft = await with_typing(
-            message.chat, import_from_url(url, svc.http, svc.llm, svc.repo.tag_options)
-        )
+        draft = await with_typing(message.chat, read())
     except RecipeImportError as exc:
         await reply_html(update, f"{escape(str(exc))} Das Rezept kann ich so leider nicht übernehmen.")
         return
@@ -255,9 +259,10 @@ async def photo_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     async def read() -> RecipeDraft:
         photos = [p for m in messages[:MAX_PHOTOS] if (p := await _download(m))]
         caption = " ".join(m.caption for m in messages if m.caption)
-        return await import_from_photos(
+        draft = await import_from_photos(
             photos, caption, svc.llm, svc.repo.tag_options, svc.repo.origin_options
         )
+        return await prepared(svc, draft)
 
     try:
         draft = await with_typing(message.chat, read())
@@ -265,6 +270,12 @@ async def photo_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await reply_html(update, escape(str(exc)))
         return
     await show_draft(update, svc, draft)
+
+
+async def prepared(svc: Services, draft: RecipeDraft) -> RecipeDraft:
+    """German lines and the ingredients to link, like "Rezept generieren" in the app."""
+    await svc.repo.list_recipes()  # loads the names in the ingredients database
+    return await prepare_import(draft, svc.llm, svc.repo.ingredient_names)
 
 
 async def show_draft(update: Update, svc: Services, draft: RecipeDraft) -> None:
@@ -306,9 +317,17 @@ async def import_decision(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     recipe = await svc.repo.create_recipe(pending.draft)
+    links = [(link.name, link.emoji) for link in pending.draft.links]
+    not_linked = await svc.repo.link_ingredients(recipe.id, links) if links else []
+    saved = f"✅ In Notion angelegt: {recipe_link(recipe)}"
+    if not_linked:
+        saved += (
+            f"\n⚠️ Nicht verknüpft: {escape(', '.join(not_linked))}. "
+            "Dafür braucht der Bot Schreibrechte auf die Zutaten-Datenbank."
+        )
     await query.answer("Gespeichert.")
     await query.edit_message_text(
-        f"{base}\n\n✅ In Notion angelegt: {recipe_link(recipe)}",
+        f"{base}\n\n{saved}",
         parse_mode=ParseMode.HTML,
         link_preview_options=NO_PREVIEW,
         reply_markup=keyboard_for(svc, [recipe]),

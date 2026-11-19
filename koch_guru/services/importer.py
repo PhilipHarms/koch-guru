@@ -48,6 +48,15 @@ MAX_PHOTOS = 4
 
 
 @dataclass
+class IngredientLink:
+    """An ingredient of the recipe to link in the ingredients database."""
+
+    name: str  # exactly as in the database, or a new name
+    emoji: str | None = None
+    new: bool = False  # not in the database yet
+
+
+@dataclass
 class RecipeDraft:
     name: str
     url: str = ""  # empty for recipes from photos
@@ -61,6 +70,7 @@ class RecipeDraft:
     origin: list[str] = field(default_factory=list)  # cookbook, existing Notion options only
     photos: list[Photo] = field(default_factory=list, repr=False)  # attached to the Notion page
     source: str = "json-ld"  # "text" or "photo" when extracted by the model
+    links: list[IngredientLink] = field(default_factory=list)  # set by `prepare_import`
 
     @property
     def site(self) -> str:
