@@ -36,6 +36,7 @@ from koch_guru.services.importer import (
     extract_with_llm,
     fetch_page,
     find_jsonld_recipe,
+    page_photo,
     photo_content,
 )
 
@@ -150,6 +151,7 @@ async def read_from_link(url: str, http: httpx.AsyncClient, llm: StructuredLLM) 
     data = find_jsonld_recipe(page_html)
     draft = draft_from_jsonld(data, final_url) if data else None
     if draft is not None:
+        draft.image = draft.image or page_photo(page_html, final_url)
         return draft
     return await extract_with_llm(final_url, page_html, [], llm)
 

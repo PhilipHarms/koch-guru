@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Protocol, TypeVar
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -150,6 +150,21 @@ class _TextExtractor(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self._skip:
             self.parts.append(data)
+
+
+META_IMAGES = ("og:image", "og:image:secure_url", "og:image:url", "twitter:image", "twitter:image:src")
+
+
+def meta_image(meta: dict[str, str], page_url: str) -> str | None:
+    """The preview photo a page shows when its link is shared (og:image), as a full address."""
+    for key in META_IMAGES:
+        if meta.get(key):
+            return _image(urljoin(page_url, html.unescape(meta[key].strip())))
+    return None
+
+
+def page_photo(page_html: str, page_url: str) -> str | None:
+    return meta_image(page_text(page_html)[1], page_url)
 
 
 def page_text(page_html: str) -> tuple[str, dict[str, str]]:
@@ -363,7 +378,7 @@ async def extract_with_llm(url: str, page_html: str, options: list[str], llm: St
         steps=[s.strip() for s in result.schritte if s.strip()],
         servings=result.portionen.strip() or None,
         total_minutes=result.minuten or None,
-        image=_image(meta.get("og:image")),
+        image=meta_image(meta, url),
         tags=filter_tags(result.tags, options),
         icon=clean_emoji(result.emoji) or FALLBACK_ICON,
         source="text",
@@ -379,6 +394,7 @@ async def import_from_url(
     if draft is None:
         log.info("Kein JSON-LD-Rezept auf %s, lese Seitentext mit dem Modell.", final_url)
         return await extract_with_llm(final_url, page_html, tag_options, llm)
+    draft.image = draft.image or page_photo(page_html, final_url)
     await classify(draft, tag_options, llm)
     return draft
 

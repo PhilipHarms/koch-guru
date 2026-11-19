@@ -253,3 +253,18 @@ async def test_photo_without_recipe_or_supported_format():
         await import_from_photos([(b"x", "image/jpeg")], "", PhotoLLM(photo_result(ist_rezept=False)), TAGS, ORIGINS)
     with pytest.raises(RecipeImportError, match="Bildformat"):
         await import_from_photos([(b"x", "image/heic")], "", PhotoLLM(photo_result()), TAGS, ORIGINS)
+
+
+async def test_photo_from_the_page_preview_when_the_recipe_data_has_none():
+    page = jsonld_page({k: v for k, v in RECIPE.items() if k != "image"})
+    page = page.replace("<head>", '<head><meta property="og:image" content="/bilder/suppe.jpg?w=1200&amp;h=630">', 1)
+    http = http_client({"/recipe": (200, page, "text/html")})
+    draft = await import_from_url("https://example.com/recipe", http, FakeLLM(), TAGS)
+    assert draft.image == "https://example.com/bilder/suppe.jpg?w=1200&h=630"
+
+
+async def test_photo_from_the_recipe_data_comes_first():
+    page = '<meta property="og:image" content="https://example.com/teaser.jpg">' + jsonld_page(RECIPE)
+    draft = await import_from_url("https://example.com/recipe", http_client({"/recipe": (200, page, "text/html")}),
+                                  FakeLLM(), TAGS)
+    assert draft.image == "https://img.example/a.jpg"
