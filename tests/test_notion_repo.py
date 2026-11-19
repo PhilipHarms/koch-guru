@@ -132,6 +132,8 @@ class FakeNotion:
         self.blocks = {}
         self.block_calls = []
         self.appended = []
+        self.appended_after = []
+        self.deleted = []
         self.reject_ingredients = False
         self.ingredient_schema = dict(INGREDIENT_SCHEMA)
         self.schema_updates = []
@@ -201,8 +203,13 @@ class FakeNotion:
                 return httpx.Response(200, json={"object": "page", "id": f"ing-new-{len(self.created)}"})
             return httpx.Response(200, json=page(500, "Neues Rezept", "https://example.com/r"))
         if path.startswith("/v1/blocks/") and path.endswith("/children") and request.method == "PATCH":
-            self.appended.append((path.split("/")[3], json.loads(request.content)["children"]))
+            body = json.loads(request.content)
+            self.appended.append((path.split("/")[3], body["children"]))
+            self.appended_after.append(body.get("after"))
             return httpx.Response(200, json={"object": "list", "results": [], "has_more": False, "next_cursor": None})
+        if path.startswith("/v1/blocks/") and request.method == "DELETE":
+            self.deleted.append(path.rsplit("/", 1)[1])
+            return httpx.Response(200, json={"object": "block", "id": path.rsplit("/", 1)[1], "in_trash": True})
         if path.startswith("/v1/pages/") and request.method == "GET":
             page_id = path.rsplit("/", 1)[1]
             found = next((p for p in self.pages if p["id"] == page_id), None)
@@ -558,3 +565,32 @@ async def test_bought_with_question_mark_is_found():
     assert repo.ingredient_fields.bought == "Bought?"
     await repo.set_bought("ing-1", True, today="2026-11-19")
     assert fake.updates[-1][1]["properties"]["Bought?"] == {"checkbox": True}
+
+
+async def test_save_generated_replaces_an_earlier_version():
+    """Generate again after a wrong link: new content in place of the old, wrong links removed."""
+    fake = FakeNotion(total=3)
+    fake.pages[1] = page(1, "Rezept 001", ingredients=["ing-1", "ing-2"])
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    draft = RecipeDraft(name="Rezept 001", url="https://example.com/richtig", ingredients=["2 EL Kurkuma"],
+                        steps=["Kochen."])
+    await repo.save_generated(
+        "page-1", draft=draft, link=[("Kurkuma", None)], replace_ids=["old-info", "old-zutaten", "old-1"],
+        unlink_ids=["ing1"], new_link="https://example.com/richtig",
+    )
+    assert fake.updates[0] == ("page-1", {"properties": {"Link": {"url": "https://example.com/richtig"}}})
+    assert fake.appended_after == ["old-info"]  # the new content goes where the old one started
+    assert fake.deleted == ["old-info", "old-zutaten", "old-1"]
+    assert fake.updates[-1][1]["properties"]["Ingredients"]["relation"] == [{"id": "ing-2"}]
+
+
+async def test_save_generated_only_unlinks():
+    fake = FakeNotion(total=3)
+    fake.pages[1] = page(1, "Rezept 001", ingredients=["ing-1", "ing-2"])
+    repo = make_repo(fake)
+    await repo.list_recipes()
+    draft = RecipeDraft(name="Rezept 001", url="", ingredients=["Wasser"], steps=["Kochen."])
+    await repo.save_generated("page-1", draft=draft, link=[], unlink_ids=["ing-2"])
+    assert fake.appended_after == [None] and fake.deleted == []
+    assert fake.updates[-1][1]["properties"]["Ingredients"]["relation"] == [{"id": "ing-1"}]

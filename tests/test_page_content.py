@@ -3,6 +3,7 @@
 from koch_guru.notion_repo import draft_blocks
 from koch_guru.page_content import (
     IconFinder,
+    generated_sections,
     german_amount,
     german_temperatures,
     ingredient_line,
@@ -330,3 +331,32 @@ def test_notes_text_keeps_lists_and_nesting():
         block("to_do", "Mehr Salz"),
     ]
     assert notes_text(blocks) == "Teig\n1. Mehl und Hefe mischen.\n  - 500 g Mehl\n2. Gehen lassen.\n- Mehr Salz"
+
+
+def test_generated_sections_finds_only_what_generation_wrote():
+    def b(i, kind, text=""):
+        return {"id": i, "type": kind, kind: {"rich_text": [{"plain_text": text}] if text else []}}
+
+    blocks = [
+        b("note", "paragraph", "Von Oma, mit mehr Knoblauch"),
+        b("info", "paragraph", "⏱ 30 Min · 🍽 4 Portionen · Quelle: jamieoliver.com"),
+        b("h1", "heading_2", "Zutaten"),
+        b("z1", "bulleted_list_item", "Für die Salsa:"),
+        b("z2", "bulleted_list_item", "2 Avocados"),
+        b("empty", "paragraph"),
+        b("h2", "heading_2", "Zubereitung"),
+        b("s1", "numbered_list_item", "Schneiden."),
+        b("s2", "numbered_list_item", "Mischen."),
+        b("cut", "paragraph", "Gekürzt, der Rest steht in der Quelle."),
+        b("h3", "heading_2", "Originalfoto"),
+        {"id": "img", "type": "image", "image": {"type": "external", "external": {"url": "https://x/y.jpg"}}},
+        b("tipp", "bulleted_list_item", "Dazu passt Reis"),
+    ]
+    found = generated_sections(blocks)
+    assert found["ids"] == ["info", "h1", "z1", "z2", "h2", "s1", "s2", "cut"]
+    assert (found["info"], found["ingredients"], found["steps"]) == (True, 2, 2)
+
+
+def test_generated_sections_on_a_page_without_them():
+    blocks = [{"id": "p", "type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "Nur eine Notiz"}]}}]
+    assert generated_sections(blocks) == {"ids": [], "info": False, "ingredients": 0, "steps": 0}

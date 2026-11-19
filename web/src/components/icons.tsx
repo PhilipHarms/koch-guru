@@ -50,6 +50,9 @@ export const AufklappenIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d=
 export const KreuzIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="M6 6l12 12M18 6 6 18" /></Svg>;
 export const ZurueckIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="m15 18-6-6 6-6" /></Svg>;
 export const WeiterIcon = (p: Props) => <Svg strokeWidth={2} {...p}><path d="m9 18 6-6-6-6" /></Svg>;
+export const NeuIcon = (p: Props) => (
+  <Svg {...p}><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8" /><path d="M4 4v4h4" /><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16" /><path d="M20 20v-4h-4" /></Svg>
+);
 export const UhrIcon = (p: Props) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></Svg>;
 export const PortionenIcon = (p: Props) => (
   <Svg {...p}><path d="M3 12a9 9 0 0 1 18 0" /><path d="M2 12h20M7 16h10" /></Svg>

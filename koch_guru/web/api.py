@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from koch_guru.llm import ModelError
 from koch_guru.models import Recipe
 from koch_guru.notion_repo import RecipeRepository
-from koch_guru.page_content import image_urls, notes_text, parse_content
+from koch_guru.page_content import fold, generated_sections, image_urls, notes_text, parse_content
 from koch_guru.services.generate import generate
 from koch_guru.services.importer import RecipeDraft, RecipeImportError
 from koch_guru.services.recommend import recommend
@@ -174,18 +174,39 @@ def llm_of(request: Request) -> Any:
     return llm
 
 
+def web_link(url: str | None) -> str | None:
+    url = (url or "").strip()
+    return url if url.startswith(("https://", "http://")) else None
+
+
+class GenerateRequest(BaseModel):
+    # Generate again, replacing the earlier version; optionally from a corrected link.
+    again: bool = False
+    link: str | None = Field(default=None, max_length=2000)
+
+
 @router.post("/recipes/{recipe_id}/generate")
-async def generate_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
+async def generate_recipe(recipe_id: str, request: Request, body: GenerateRequest | None = None) -> dict[str, Any]:
     """Read ingredients and steps from the recipe's link, or its notes and photos. Writes nothing yet."""
     llm = llm_of(request)
     repo = repo_of(request)
     recipe = await find_recipe(repo, recipe_id)
-    link = recipe.url if recipe.url and recipe.url.startswith(("https://", "http://")) else None
-    blocks = await repo.page_blocks(recipe.id)
+    again = bool(body and body.again)
+    link = web_link(recipe.url)
+    if body and body.link and body.link.strip():
+        link = web_link(body.link)
+        if link is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Der Link muss mit http:// oder https:// beginnen."
+            )
+    blocks = await repo.page_blocks(recipe.id, refresh=again)
+    earlier = generated_sections(blocks) if again else {"ids": [], "info": False, "ingredients": 0, "steps": 0}
+    # The earlier version is no source for the new one.
+    notes_blocks = [b for b in blocks if b.get("id") not in set(earlier["ids"])]
     try:
         result = await generate(
             link=link,
-            notes=notes_text(blocks),
+            notes=notes_text(notes_blocks),
             photo_urls=image_urls(blocks),
             http=request.app.state.http,
             llm=llm,
@@ -202,7 +223,17 @@ async def generate_recipe(recipe_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, detail="Das hat nicht geklappt. Versuch es gleich noch einmal."
         ) from exc
-    return result.as_json()
+    data = result.as_json()
+    if again:
+        data["replaces"] = {key: earlier[key] for key in ("info", "ingredients", "steps")}
+        # Linked ingredients the new version does not use, e.g. from a wrong link.
+        used = {fold(i.existing or i.zutat) for i in result.ingredients if not i.group}
+        data["unlink"] = [
+            {"id": ingredient_id, "name": name}
+            for ingredient_id, name in zip(recipe.ingredient_ids, recipe.ingredients)
+            if fold(name) not in used
+        ]
+    return data
 
 
 class GeneratedLine(BaseModel):
@@ -219,6 +250,10 @@ class GeneratedSave(BaseModel):
     ingredients: list[GeneratedLine] = Field(max_length=80)
     steps: list[str] = Field(max_length=60)
     cover: str | None = Field(default=None, max_length=2000)  # photo to set as the page cover
+    replace_cover: bool = False  # set `cover` even if the page has one
+    replace: bool = False  # replace the earlier generated ingredients and steps
+    unlink: list[str] = Field(default_factory=list, max_length=100)  # ingredient ids to unlink
+    new_link: str | None = Field(default=None, max_length=2000)  # corrected link for the Link field
 
 
 @router.post("/recipes/{recipe_id}/generate/save")
@@ -235,8 +270,18 @@ async def save_generated_recipe(recipe_id: str, body: GeneratedSave, request: Re
         total_minutes=body.minutes or None,
     )
     links = [(i.zutat.strip(), i.emoji) for i in body.ingredients if i.link and i.zutat.strip()]
-    cover = body.cover if body.cover and body.cover.startswith("https://") and not recipe.cover else None
-    not_created = await repo.save_generated(recipe.id, draft=draft, link=links, cover=cover)
+    may_set_cover = not recipe.cover or body.replace_cover
+    cover = body.cover if body.cover and body.cover.startswith("https://") and may_set_cover else None
+    # Found again on the fresh page, so nothing else gets deleted.
+    replace_ids = generated_sections(await repo.page_blocks(recipe.id, refresh=True))["ids"] if body.replace else []
+    linked = {i.replace("-", ""): i for i in recipe.ingredient_ids}
+    unlink = [linked[key] for i in body.unlink if (key := i.replace("-", "")) in linked]
+    new_link = web_link(body.new_link)
+    if new_link == web_link(recipe.url):
+        new_link = None
+    not_created = await repo.save_generated(
+        recipe.id, draft=draft, link=links, cover=cover, replace_ids=replace_ids, unlink_ids=unlink, new_link=new_link
+    )
     return {"recipe": recipe_json(await find_recipe(repo, recipe.id)), "not_created": not_created}
 
 

@@ -7,7 +7,7 @@ import { canGoBack } from '../lib/nav';
 import { messageOf, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { RecipeImage } from '../components/RecipeImage';
-import { ExternIcon, HakenIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
+import { ExternIcon, HakenIcon, NeuIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
 import { PlaceholderPage } from './Placeholder';
 
 type Loadable<T> = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; value: T };
@@ -187,12 +187,20 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
   let number = 0;
   // Notes or photos on the Notion page are a source too, e.g. when the link is Instagram.
   const hasNotes = content.blocks.length > 0;
+  const [again, setAgain] = useState(false);
+  const saved = (notCreated: string[]) => {
+    setAgain(false);
+    onGenerated(notCreated);
+  };
   return (
     <section class="rezept-abschnitt" aria-labelledby="zubereitung-titel">
       <h2 id="zubereitung-titel" class="abschnitt">Zubereitung</h2>
       {content.steps.length === 0 ? (
         <Generate recipe={recipe} link={link} canGenerate={Boolean(link) || hasNotes} onSaved={onGenerated} />
+      ) : again ? (
+        <Generate recipe={recipe} link={link} canGenerate onSaved={saved} again={{ onCancel: () => setAgain(false) }} />
       ) : (
+        <>
         <ol class="schritte">
           {content.steps.map((step, index) => {
             if ('group' in step) return <li key={index} class="schritte-gruppe overline">{step.group}</li>;
@@ -205,6 +213,10 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
             );
           })}
         </ol>
+        <button type="button" class="neu-generieren" onClick={() => setAgain(true)}>
+          <NeuIcon size={16} />Neu generieren
+        </button>
+        </>
       )}
     </section>
   );
@@ -215,7 +227,17 @@ function Steps({ recipe, content, link, onGenerated }: StepsProps) {
 type GenerateState =
   | { kind: 'idle' }
   | { kind: 'reading' }
-  | { kind: 'preview'; value: GeneratedRecipe; include: boolean[]; cover: boolean; saving: boolean }
+  | {
+      kind: 'preview';
+      value: GeneratedRecipe;
+      include: boolean[];
+      cover: boolean;
+      /** Ingredient ids to unlink, when generating again. */
+      unlink: string[];
+      /** The corrected link, when it differs from the recipe's. */
+      newLink: string | null;
+      saving: boolean;
+    }
   | { kind: 'error'; message: string };
 
 function statusText(item: GeneratedIngredient, include: boolean): string {
@@ -224,26 +246,59 @@ function statusText(item: GeneratedIngredient, include: boolean): string {
   return item.status === 'existing' ? `verknüpft mit „${item.zutat}“` : `wird als „${item.zutat}“ neu angelegt`;
 }
 
-function Generate({ recipe, link, canGenerate, onSaved }: {
+function Generate({ recipe, link, canGenerate, onSaved, again }: {
   recipe: Recipe;
   link: string | null;
   canGenerate: boolean;
   onSaved: (notCreated: string[]) => void;
+  /** Generate again and replace the earlier version, e.g. after a wrong link. */
+  again?: { onCancel: () => void };
 }) {
   const { updateRecipe } = useData();
   const [state, setState] = useState<GenerateState>({ kind: 'idle' });
+  const [typedLink, setTypedLink] = useState(link ?? '');
 
   const read = async () => {
     setState({ kind: 'reading' });
+    const wanted = typedLink.trim();
+    const newLink = again && wanted && wanted !== (link ?? '') ? wanted : null;
     try {
-      const value = await api.generate(recipe.id);
-      // The photo is offered as cover only when the recipe has none yet.
-      const cover = Boolean(value.image && !recipe.image);
-      setState({ kind: 'preview', value, include: value.ingredients.map((i) => i.include), cover, saving: false });
+      const value = await api.generate(recipe.id, again ? { link: wanted || null } : undefined);
+      // A photo replaces an existing cover only after a corrected link; without a cover it is offered.
+      const cover = Boolean(value.image && (!recipe.image || newLink));
+      setState({
+        kind: 'preview', value, include: value.ingredients.map((i) => i.include), cover,
+        unlink: (value.unlink ?? []).map((u) => u.id), newLink, saving: false,
+      });
     } catch (error) {
       setState({ kind: 'error', message: messageOf(error) });
     }
   };
+
+  if (again && (state.kind === 'idle' || state.kind === 'error')) {
+    return (
+      <form class="leer-box" onSubmit={(e) => { e.preventDefault(); read(); }}>
+        <h3 class="titel-block">Neu generieren</h3>
+        <p class="text-klein muted">
+          KochGuru liest das Rezept noch einmal. In der Vorschau siehst du, was sich ändert; die bisherigen
+          Zutaten und Schritte werden erst beim Speichern ersetzt.
+        </p>
+        <label class="neu-link">
+          <span class="text-klein">Link zum Rezept</span>
+          <span class="kg-search">
+            <input type="url" inputMode="url" value={typedLink} placeholder="https://…"
+              onInput={(e) => setTypedLink((e.target as HTMLInputElement).value)} />
+          </span>
+          <span class="meta muted">Ohne Link liest KochGuru die Notizen und Fotos in Notion.</span>
+        </label>
+        {state.kind === 'error' && <p class="fehler" role="alert">{state.message}</p>}
+        <div class="knopf-reihe">
+          <button type="submit" class="kg-btn kg-btn-primaer">Generieren</button>
+          <button type="button" class="kg-btn kg-btn-sekundaer" onClick={again.onCancel}>Abbrechen</button>
+        </div>
+      </form>
+    );
+  }
 
   if (state.kind === 'idle' || state.kind === 'error') {
     return (
@@ -278,10 +333,15 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
     );
   }
 
-  const { value, include, cover, saving } = state;
-  const offerCover = Boolean(value.image && !recipe.image);
+  const { value, include, cover, unlink, newLink, saving } = state;
+  const offerCover = Boolean(value.image && (!recipe.image || again));
+  const replacesCover = Boolean(recipe.image);
   const toggle = (index: number) =>
     setState({ ...state, include: include.map((on, i) => (i === index ? !on : on)) });
+  const toggleUnlink = (id: string) =>
+    setState({ ...state, unlink: unlink.includes(id) ? unlink.filter((u) => u !== id) : [...unlink, id] });
+  const replaces = value.replaces;
+  const replacesSomething = Boolean(replaces && (replaces.ingredients || replaces.steps || replaces.info));
 
   const save = async () => {
     setState({ ...state, saving: true });
@@ -292,6 +352,10 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
         minutes: value.minutes,
         steps: value.steps,
         cover: offerCover && cover ? value.image : null,
+        replace_cover: Boolean(again && replacesCover && cover),
+        replace: Boolean(again && replacesSomething),
+        unlink: again ? unlink : [],
+        new_link: newLink,
         ingredients: value.ingredients.map((item, i) => ({
           line: item.line, zutat: item.zutat, emoji: item.emoji, link: include[i] && item.status !== 'linked',
         })),
@@ -302,6 +366,7 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
       setState({ kind: 'error', message: messageOf(error) });
     }
   };
+  const discard = () => (again ? again.onCancel() : setState({ kind: 'idle' }));
 
   let host = 'der Notion-Seite';
   if (value.url) {
@@ -315,12 +380,20 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
   return (
     <div class="generiert" aria-live="polite">
       <p class="meta muted">Vorschau aus {host}, noch nicht gespeichert</p>
+      {again && (
+        <p class="text-klein generiert-ersetzt">
+          {replacesSomething && replaces
+            ? `Ersetzt auf der Notion-Seite ${replacedText(replaces)}. Notizen und Fotos bleiben.`
+            : 'Auf der Notion-Seite gibt es keine Abschnitte „Zutaten“ und „Zubereitung“ von KochGuru. Die neue Fassung wird unten angehängt.'}
+          {newLink && ' Der Link in Notion wird auf den neuen geändert.'}
+        </p>
+      )}
       {offerCover && value.image && (
         <label class="generiert-bild">
           <img src={value.image} alt="" referrerpolicy="no-referrer" loading="lazy" />
           <span class="generiert-bild-wahl">
             <input type="checkbox" checked={cover} disabled={saving} onChange={() => setState({ ...state, cover: !cover })} />
-            <span class="text-klein">Als Titelbild in Notion übernehmen</span>
+            <span class="text-klein">{replacesCover ? 'Titelbild in Notion ersetzen' : 'Als Titelbild in Notion übernehmen'}</span>
           </span>
         </label>
       )}
@@ -349,6 +422,28 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
           </li>
         ))}
       </ul>
+      {again && value.unlink && value.unlink.length > 0 && (
+        <>
+          <h3 class="titel-block">Bisher verknüpft, im neuen Rezept nicht dabei</h3>
+          <p class="text-klein muted">Angehakte Verknüpfungen werden entfernt. Die Zutaten selbst bleiben in eurer Zutaten-Datenbank.</p>
+          <ul class="zutaten">
+            {value.unlink.map((item) => (
+              <li key={item.id} class="zutat generiert-zutat">
+                <label>
+                  <input type="checkbox" checked={unlink.includes(item.id)} disabled={saving} onChange={() => toggleUnlink(item.id)} />
+                  <span class="zutat-emoji" aria-hidden="true">{initialOf(item.name)}</span>
+                  <span class="zutat-text">
+                    <span class="zutat-name">{item.name}</span>
+                    <span class={`meta generiert-status ${unlink.includes(item.id) ? 'generiert-new' : 'generiert-aus'}`}>
+                      {unlink.includes(item.id) ? 'Verknüpfung wird entfernt' : 'bleibt verknüpft'}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <h3 class="titel-block">Zubereitung</h3>
       {value.steps.length ? (
         <ol class="schritte">
@@ -366,12 +461,20 @@ function Generate({ recipe, link, canGenerate, onSaved }: {
         <button type="button" class="kg-btn kg-btn-primaer" disabled={saving} onClick={save}>
           {saving ? 'Speichert …' : 'In Notion speichern'}
         </button>
-        <button type="button" class="kg-btn kg-btn-sekundaer" disabled={saving} onClick={() => setState({ kind: 'idle' })}>
+        <button type="button" class="kg-btn kg-btn-sekundaer" disabled={saving} onClick={discard}>
           Verwerfen
         </button>
       </div>
     </div>
   );
+}
+
+function replacedText(replaces: { info: boolean; ingredients: number; steps: number }): string {
+  const parts: string[] = [];
+  if (replaces.ingredients) parts.push(`die Zutaten (${replaces.ingredients} ${replaces.ingredients === 1 ? 'Zeile' : 'Zeilen'})`);
+  if (replaces.steps) parts.push(`die Zubereitung (${replaces.steps} ${replaces.steps === 1 ? 'Schritt' : 'Schritte'})`);
+  if (replaces.info) parts.push('die Infozeile mit der Quelle');
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} und ${parts[parts.length - 1]}` : parts[0];
 }
 
 // --- Other Notion content -------------------------------------------------------------
