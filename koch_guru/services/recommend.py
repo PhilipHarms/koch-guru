@@ -111,7 +111,9 @@ def build_catalog(recipes: list[Recipe], today: date | None = None) -> str:
         if recipe.this_week:
             line += " | steht schon auf der Wochenliste"
         if recipe.ratings:
-            line += " | Sterne: " + ", ".join(f"{person} {stars}" for person, stars in recipe.ratings)
+            line += " | Sterne: " + ", ".join(
+                f"{person} {str(stars).replace('.', ',')}" for person, stars in recipe.ratings
+            )
         if recipe.last_cooked and today:
             try:
                 days = (today - date.fromisoformat(recipe.last_cooked)).days

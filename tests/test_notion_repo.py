@@ -781,3 +781,9 @@ async def test_set_cover_url():
     assert fake.updates[-1] == (target.id, {"cover": {"type": "external", "external": {"url": "https://example.com/foto.jpg"}}})
     assert next(r for r in await repo.list_recipes() if r.id == target.id).cover == "https://example.com/foto.jpg"
     assert fake.query_calls == 1
+
+
+def test_ratings_are_read_in_quarters():
+    from koch_guru.notion_repo import quarter_stars
+    assert [quarter_stars(v) for v in (4, 4.25, 4.3, 3.9, 0.25)] == [4, 4.25, 4.25, 4, 0.25]
+    assert isinstance(quarter_stars(4.0), int)

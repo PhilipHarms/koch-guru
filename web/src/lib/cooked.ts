@@ -26,8 +26,9 @@ export function averageStars(recipe: Recipe): number | null {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
 }
 
+/** "★ 4,25": an average is rounded to quarter stars, like the ratings themselves. */
 export function starsText(value: number): string {
-  return `★ ${value.toLocaleString('de', { maximumFractionDigits: 1 })}`;
+  return `★ ${(Math.round(value * 4) / 4).toLocaleString('de', { maximumFractionDigits: 2 })}`;
 }
 
 /** Today as YYYY-MM-DD in local time, like the server's "Zuletzt gekocht". */

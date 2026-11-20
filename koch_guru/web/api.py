@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from koch_guru.llm import ModelError
 from koch_guru.models import Recipe
-from koch_guru.notion_repo import MAX_BLOCKS, RecipeRepository, content_blocks
+from koch_guru.notion_repo import MAX_BLOCKS, RecipeRepository, content_blocks, quarter_stars
 from koch_guru.page_content import (
     best_match,
     editable_content,
@@ -485,7 +485,7 @@ async def add_extra(item: ExtraItem, request: Request) -> dict[str, Any]:
 
 
 class Cooked(BaseModel):
-    stars: int | None = Field(default=None, ge=1, le=5)
+    stars: float | None = Field(default=None, ge=0.25, le=5, multiple_of=0.25)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -498,12 +498,13 @@ async def mark_cooked(
     if not repo.supports_cooked:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Rezeptdatenbank hat kein Feld „Zuletzt gekocht“.")
     recipe = await find_recipe(repo, recipe_id)
-    await repo.mark_cooked(recipe.id, person=display_name(user), today=today(), stars=body.stars, note=body.note)
+    stars = quarter_stars(body.stars) if body.stars else None
+    await repo.mark_cooked(recipe.id, person=display_name(user), today=today(), stars=stars, note=body.note)
     return recipe_json(await find_recipe(repo, recipe.id))
 
 
 class Rating(BaseModel):
-    stars: int = Field(ge=0, le=5)  # 0 removes the rating
+    stars: float = Field(ge=0, le=5, multiple_of=0.25)  # in quarter stars; 0 removes the rating
 
 
 @router.put("/recipes/{recipe_id}/rating")
@@ -514,7 +515,7 @@ async def rate(recipe_id: str, body: Rating, request: Request, user: str = Depen
     if person not in repo.people:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Die Rezeptdatenbank hat kein Feld „Bewertung {person}“.")
     recipe = await find_recipe(repo, recipe_id)
-    await repo.set_rating(recipe.id, person, body.stars or None)
+    await repo.set_rating(recipe.id, person, quarter_stars(body.stars) if body.stars else None)
     return recipe_json(await find_recipe(repo, recipe.id))
 
 

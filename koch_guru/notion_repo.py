@@ -159,6 +159,12 @@ def resolve_mapping(
     )
 
 
+def quarter_stars(value: float) -> float:
+    """Stars rounded to quarters (4.3 -> 4.25); whole stars stay whole numbers."""
+    stars = round(value * 4) / 4
+    return int(stars) if stars.is_integer() else stars
+
+
 def rating_name(wanted: PropertyNames, person: str) -> str:
     return f"{wanted.rating} {person}"
 
@@ -239,8 +245,8 @@ def page_to_recipe(
         last_cooked=((props.get(mapping.last_cooked) or {}).get("date") or {}).get("start", "")[:10] or None
         if mapping.last_cooked else None,
         ratings=tuple(
-            (person, int(stars)) for person, prop in mapping.ratings
-            if isinstance(stars := (props.get(prop) or {}).get("number"), (int, float)) and 1 <= stars <= 5
+            (person, quarter_stars(stars)) for person, prop in mapping.ratings
+            if isinstance(stars := (props.get(prop) or {}).get("number"), (int, float)) and 0.25 <= stars <= 5
         ),
         note=_plain_text((props.get(mapping.note) or {}).get("rich_text")) or None if mapping.note else None,
     )
@@ -974,7 +980,7 @@ class RecipeRepository:
     def supports_cooked(self) -> bool:
         return bool(self._mapping and self._mapping.last_cooked)
 
-    async def set_rating(self, page_id: str, person: str, stars: int | None) -> Recipe | None:
+    async def set_rating(self, page_id: str, person: str, stars: float | None) -> Recipe | None:
         """Set or remove (None) one person's stars. Returns the updated recipe from the cache."""
         prop = dict(self._mapping.ratings).get(person) if self._mapping else None
         if prop is None:
@@ -983,7 +989,7 @@ class RecipeRepository:
         return self._cache_rating(page_id, person, stars)
 
     async def mark_cooked(
-        self, page_id: str, *, person: str, today: str, stars: int | None = None, note: str | None = None
+        self, page_id: str, *, person: str, today: str, stars: float | None = None, note: str | None = None
     ) -> Recipe | None:
         """"Gekocht": sets "Zuletzt gekocht", the person's stars and appends the note."""
         if not self._mapping or not self._mapping.last_cooked:
@@ -1007,7 +1013,7 @@ class RecipeRepository:
             recipe = self._cache_rating(page_id, person, stars) or recipe
         return recipe
 
-    def _cache_rating(self, page_id: str, person: str, stars: int | None) -> Recipe | None:
+    def _cache_rating(self, page_id: str, person: str, stars: float | None) -> Recipe | None:
         recipe = next((r for r in self._cache or [] if r.short_id == page_id.replace("-", "")), None)
         if recipe is None:
             return None
