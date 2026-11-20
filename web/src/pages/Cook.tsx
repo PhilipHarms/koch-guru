@@ -7,23 +7,29 @@ import { clock, findDuration } from '../lib/duration';
 import { chosenServings, scaleAmount, servingsCount, servingsFactor } from '../lib/portions';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId } from '../lib/recipe';
+import { stepLinks } from '../lib/stepLinks';
 import { HakenIcon, KreuzIcon, ListeIcon, UhrIcon, WeiterIcon } from '../components/icons';
 import { CookedSheet } from '../components/CookedSheet';
 import { PlaceholderPage } from './Placeholder';
 
 type CookStep = { text: string; group: string | null; uses: number[] };
+/** What the steps use: KochGuru's answer, still being read, or (without an answer) the words of each step. */
+type Links = number[][] | 'loading' | 'words';
 type Timer = { endsAt: number; seconds: number; rang: boolean };
 /** Where you were in a recipe, so closing the cooking mode by mistake loses nothing. */
 type Session = { index: number; timers: Record<number, Timer> };
 
 const sessions = new Map<string, Session>();
 
-function cookSteps(content: RecipeContent): CookStep[] {
+function cookSteps(content: RecipeContent, links: Links = 'words'): CookStep[] {
   const steps: CookStep[] = [];
   let group: string | null = null;
   for (const step of content.steps) {
     if ('group' in step) group = step.group;
-    else steps.push({ text: step.text, group, uses: step.uses ?? [] });
+    else {
+      const read = Array.isArray(links) ? links[steps.length] : links === 'loading' ? [] : undefined;
+      steps.push({ text: step.text, group, uses: read ?? step.uses ?? [] });
+    }
   }
   return steps;
 }
@@ -37,11 +43,20 @@ export function CookRoute({ id }: { id: string }) {
 
 function CookLoader({ recipe }: { recipe: Recipe }) {
   const [content, setContent] = useState<RecipeContent | null>(null);
+  const [links, setLinks] = useState<Links>('loading');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
+    setLinks('loading');
     api.content(recipe.id).then(
-      (value) => active && setContent(value),
+      (value) => {
+        if (!active) return;
+        setContent(value);
+        stepLinks(recipe.id, value).then(
+          (uses) => active && setLinks(uses),
+          () => active && setLinks('words'),
+        );
+      },
       (err) => active && setError(messageOf(err)),
     );
     return () => {
@@ -66,7 +81,7 @@ function CookLoader({ recipe }: { recipe: Recipe }) {
       </div>
     );
   }
-  return <CookMode recipe={recipe} content={content} />;
+  return <CookMode recipe={recipe} content={content} links={links} />;
 }
 
 // --- Sound and screen ---------------------------------------------------------------------
@@ -140,9 +155,9 @@ function useScreenAwake(): boolean {
 
 // --- Cooking mode ---------------------------------------------------------------------------
 
-function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent }) {
+function CookMode({ recipe, content, links }: { recipe: Recipe; content: RecipeContent; links: Links }) {
   const { route } = useLocation();
-  const steps = useMemo(() => cookSteps(content), [content]);
+  const steps = useMemo(() => cookSteps(content, links), [content, links]);
   const saved = sessions.get(recipe.id);
   const [index, setIndex] = useState(Math.min(saved?.index ?? 0, steps.length - 1));
   const [timers, setTimers] = useState<Record<number, Timer>>(saved?.timers ?? {});
@@ -314,7 +329,7 @@ function CookMode({ recipe, content }: { recipe: Recipe; content: RecipeContent 
         {last ? (
           <button type="button" class="kg-btn kg-btn-gross kg-btn-fertig kochmodus-weiter"
             onClick={cookedSupported ? () => setRating(true) : finish}>
-            <HakenIcon size={20} />{cookedSupported ? 'Gekocht, bewerten' : 'Fertig'}
+            <HakenIcon size={20} />{cookedSupported ? 'Gekocht' : 'Fertig'}
           </button>
         ) : (
           <button type="button" class="kg-btn kg-btn-gross kg-btn-primaer kochmodus-weiter" onClick={() => go(index + 1)}>

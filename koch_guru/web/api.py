@@ -32,6 +32,7 @@ from koch_guru.page_content import (
 from koch_guru.services.drafts import DraftStore
 from koch_guru.services.generate import generate, line_name, name_ingredients, prepare
 from koch_guru.services.photos import find_photo
+from koch_guru.services.step_links import StepLinker
 from koch_guru.services.week import WEEK_SIZE, plan_week
 from koch_guru.services.importer import (
     MAX_PHOTOS,
@@ -134,6 +135,27 @@ async def get_recipe_content(recipe_id: str, request: Request) -> dict[str, Any]
     recipe = await find_recipe(repo, recipe_id)
     blocks = await repo.page_blocks(recipe.id)
     return parse_content(blocks, ingredients=recipe.ingredients, icon_by_name=repo.ingredient_icons)
+
+
+@router.get("/recipes/{recipe_id}/step-links")
+async def get_step_links(recipe_id: str, request: Request) -> dict[str, Any]:
+    """For each step of the method (headings left out) the ingredients it uses, read by KochGuru.
+
+    The words of a step alone are not enough: "bis der Käse geschmolzen ist" uses no cheese.
+    Answers are kept per content, so asking again is free.
+    """
+    state = request.app.state
+    if getattr(state, "step_linker", None) is None:
+        state.step_linker = StepLinker(llm_of(request))
+    repo = repo_of(request)
+    recipe = await find_recipe(repo, recipe_id)
+    content = parse_content(await repo.page_blocks(recipe.id), ingredients=recipe.ingredients,
+                            icon_by_name=repo.ingredient_icons)
+    try:
+        return {"uses": await state.step_linker.links(content)}
+    except Exception as exc:  # the cooking mode then goes by the words of each step
+        log.warning("Zutaten der Schritte von %s nicht gelesen: %s", recipe.name, exc)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="KochGuru hat gerade keine Antwort.") from exc
 
 
 @router.get("/recipes/{recipe_id}/image")
@@ -496,13 +518,18 @@ class Cooked(BaseModel):
 async def mark_cooked(
     recipe_id: str, body: Cooked, request: Request, user: str = Depends(current_user)
 ) -> dict[str, Any]:
-    """"Gekocht": today as "Zuletzt gekocht", and the signed-in person's stars and note."""
+    """"Gekocht": today as "Zuletzt gekocht", the signed-in person's stars and note.
+
+    What is cooked is done for the week, so it also leaves the week list.
+    """
     repo = repo_of(request)
     if not repo.supports_cooked:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Rezeptdatenbank hat kein Feld „Zuletzt gekocht“.")
     recipe = await find_recipe(repo, recipe_id)
     stars = quarter_stars(body.stars) if body.stars else None
     await repo.mark_cooked(recipe.id, person=display_name(user), today=today(), stars=stars, note=body.note)
+    if recipe.this_week and repo.supports_this_week:
+        await repo.set_this_week(recipe.id, False)
     return recipe_json(await find_recipe(repo, recipe.id))
 
 

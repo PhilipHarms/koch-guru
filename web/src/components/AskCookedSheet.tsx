@@ -4,15 +4,17 @@ import { CookedSheet } from './CookedSheet';
 
 /**
  * Before a recipe leaves the week list without the cooking mode: was it cooked?
- * "Ja" goes on to "Wie war's?"; `onDecided` then takes it off the list. Cancel leaves everything as it was.
+ * "Ja" goes on to "Wie war's?", and saving that takes it off the list too (`onCooked`);
+ * "Nein" leaves the removing to `onRemoveOnly`. Cancel leaves everything as it was.
  */
-export function AskCookedSheet({ recipe, onCancel, onDecided }: {
+export function AskCookedSheet({ recipe, onCancel, onCooked, onRemoveOnly }: {
   recipe: Recipe;
   onCancel: () => void;
-  onDecided: () => void;
+  onCooked: () => void;
+  onRemoveOnly: () => void;
 }) {
   const [rating, setRating] = useState(false);
-  if (rating) return <CookedSheet recipe={recipe} onCancel={onCancel} onSaved={onDecided} />;
+  if (rating) return <CookedSheet recipe={recipe} onCancel={onCancel} onSaved={onCooked} />;
   return (
     <>
       <div class="blatt-hintergrund" aria-hidden="true" onClick={onCancel} />
@@ -23,7 +25,7 @@ export function AskCookedSheet({ recipe, onCancel, onDecided }: {
           <button type="button" class="kg-btn kg-btn-gross kg-btn-primaer" onClick={() => setRating(true)}>
             Ja, gekocht
           </button>
-          <button type="button" class="kg-btn kg-btn-gross kg-btn-sekundaer" onClick={onDecided}>
+          <button type="button" class="kg-btn kg-btn-gross kg-btn-sekundaer" onClick={onRemoveOnly}>
             Nein, nur entfernen
           </button>
         </div>

@@ -7,6 +7,7 @@ import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { cookedLabel, cookedThisWeek } from '../lib/cooked';
+import { stepLinks } from '../lib/stepLinks';
 import { chooseServings, chosenServings, scaleAmount, servingsCount } from '../lib/portions';
 import { Stars } from '../components/Stars';
 import { AskCookedSheet } from '../components/AskCookedSheet';
@@ -46,7 +47,12 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
     let active = true;
     setContent({ kind: 'loading' });
     api.content(recipe.id).then(
-      (value) => active && setContent({ kind: 'ready', value }),
+      (value) => {
+        if (!active) return;
+        setContent({ kind: 'ready', value });
+        // Ask ahead what each step uses, so the cooking mode has it when it opens.
+        if (value.steps.some((step) => 'text' in step)) stepLinks(recipe.id, value).catch(() => {});
+      },
       (error) => active && setContent({ kind: 'error', message: messageOf(error) }),
     );
     return () => {
@@ -171,7 +177,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
 
       {askingCooked && (
         <AskCookedSheet recipe={recipe} onCancel={() => setAskingCooked(false)}
-          onDecided={() => { setAskingCooked(false); setWeek(); }} />
+          onCooked={() => setAskingCooked(false)} onRemoveOnly={() => { setAskingCooked(false); setWeek(); }} />
       )}
     </main>
   );

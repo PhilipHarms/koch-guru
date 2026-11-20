@@ -219,6 +219,8 @@ export const api = {
   me: () => request<Me>('/api/me'),
   recipes: () => request<RecipeList>('/api/recipes'),
   content: (id: string) => request<RecipeContent>(`/api/recipes/${encodeURIComponent(id)}/content`),
+  /** For each step (headings left out) the positions in `ingredients` it uses, read by KochGuru. */
+  stepLinks: (id: string) => request<{ uses: number[][] }>(`/api/recipes/${encodeURIComponent(id)}/step-links`),
   suggest: (wish: string, history: ChatTurn[]) =>
     request<Suggestions>('/api/suggest', { method: 'POST', body: JSON.stringify({ wish, history }) }),
   generate: (id: string, again?: { link: string | null }) =>
