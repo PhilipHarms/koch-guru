@@ -7,9 +7,15 @@ import { messageOf } from '../lib/recipe';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon, UhrIcon } from '../components/icons';
 
-/** Dishes KochGuru plans for a week; fewer when some are already on the list, but always a few. */
+/** Dishes KochGuru plans for a week; fewer when the week is half planned, but always a few. */
 const WEEK_SIZE = 5;
 const AT_LEAST = 2;
+/** With this many left on the list, the week is nearly over: plan a whole new one. */
+const NEW_WEEK = 1;
+
+function ideasFor(planned: number): number {
+  return planned <= NEW_WEEK ? WEEK_SIZE : Math.max(AT_LEAST, WEEK_SIZE - planned);
+}
 const EXCLUDE_MAX = 100; // what the server takes
 
 type Phase = 'loading' | 'review' | 'swapping' | 'saving' | 'error';
@@ -19,7 +25,7 @@ export function PlanWeekPage() {
   const { recipes, weekSupported, updateRecipe } = useData();
   const { route } = useLocation();
   // Fixed when the screen opens; adding to the list here must not change it.
-  const [count] = useState(() => Math.max(AT_LEAST, WEEK_SIZE - recipes.filter((r) => r.this_week).length));
+  const [count] = useState(() => ideasFor(recipes.filter((r) => r.this_week).length));
   const [phase, setPhase] = useState<Phase>('loading');
   const [ideas, setIdeas] = useState<WeekSuggestion[]>([]);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
