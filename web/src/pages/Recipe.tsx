@@ -6,9 +6,10 @@ import { useData } from '../lib/data';
 import { canGoBack } from '../lib/nav';
 import { messageOf, recipePath, sameId, sourceLink, sourceOf } from '../lib/recipe';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
-import { cookedLabel } from '../lib/cooked';
+import { cookedLabel, cookedThisWeek } from '../lib/cooked';
 import { chooseServings, chosenServings, scaleAmount, servingsCount } from '../lib/portions';
 import { Stars } from '../components/Stars';
+import { AskCookedSheet } from '../components/AskCookedSheet';
 import { RecipeImage } from '../components/RecipeImage';
 import { IngredientChoice, initialOf } from '../components/IngredientChoice';
 import { ExternIcon, GekochtIcon, StiftIcon, HakenIcon, KochenIcon, MinusIcon, NeuIcon, PlusIcon, PortionenIcon, UhrIcon, WocheIcon, ZurueckIcon } from '../components/icons';
@@ -25,11 +26,12 @@ export function RecipeRoute({ id }: { id: string }) {
 }
 
 function RecipePage({ recipe }: { recipe: Recipe }) {
-  const { weekSupported, updateRecipe } = useData();
+  const { weekSupported, cookedSupported, updateRecipe } = useData();
   const { route } = useLocation();
   const [content, setContent] = useState<Loadable<RecipeContent>>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [askingCooked, setAskingCooked] = useState(false);
   const [weekError, setWeekError] = useState<string | null>(null);
   const [notCreated, setNotCreated] = useState<string[]>([]);
   const [chosen, setChosen] = useState<number | null>(() => chosenServings(recipe.id));
@@ -54,7 +56,7 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
 
   const goBack = () => (canGoBack() ? window.history.back() : route('/rezepte', true));
 
-  const toggleWeek = async () => {
+  const setWeek = async () => {
     setSaving(true);
     setWeekError(null);
     try {
@@ -65,6 +67,10 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
       setSaving(false);
     }
   };
+
+  // Off the list without the cooking mode: ask first whether it was cooked.
+  const toggleWeek = () =>
+    recipe.this_week && cookedSupported && !cookedThisWeek(recipe) ? setAskingCooked(true) : setWeek();
 
   const ready = content.kind === 'ready' ? content.value : null;
   const base = servingsCount(ready?.servings);
@@ -162,6 +168,11 @@ function RecipePage({ recipe }: { recipe: Recipe }) {
           </section>
         )}
       </div>
+
+      {askingCooked && (
+        <AskCookedSheet recipe={recipe} onCancel={() => setAskingCooked(false)}
+          onDecided={() => { setAskingCooked(false); setWeek(); }} />
+      )}
     </main>
   );
 }

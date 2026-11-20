@@ -527,3 +527,12 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
   .planen-platzhalter .kg-bild, .planen-strich { animation: planen-puls 1.4s ease-in-out infinite; }
 }
 @keyframes planen-puls { 50% { opacity: 0.45; } }
+
+/* Gekocht? beim Entfernen von der Wochenliste */
+.gekocht-frage-text { margin: calc(-1 * var(--space-8)) 0 0; }
+.gekocht-frage-knoepfe { display: flex; flex-direction: column; gap: var(--space-10); }
+.woche-gekocht-wahl { display: flex; flex-direction: column; gap: var(--space-8); margin: 0; padding: 0; border: 0; }
+.woche-gekocht-wahl legend { padding: 0; margin-bottom: var(--space-4); }
+.woche-gekocht-wahl label { display: flex; align-items: center; gap: var(--space-12); min-height: 40px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.woche-gekocht-wahl input { flex-shrink: 0; width: 22px; height: 22px; margin: 0; accent-color: var(--brand); }
+.woche-gekocht { color: var(--tag-veggie-ink); font-weight: 600; }
