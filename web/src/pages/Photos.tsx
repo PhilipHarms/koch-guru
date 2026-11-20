@@ -91,21 +91,24 @@ export function PhotosPage() {
   const save = async () => {
     setPhase('saving');
     setError(null);
-    let saved = 0;
+    const savedIds = new Set<string>();
     const failed: string[] = [];
     try {
       for (let i = 0; i < selected.length; i += SAVE_BATCH) {
         const items = selected.slice(i, i + SAVE_BATCH).map((r) => ({ id: r.id, image: found.get(r.id)! }));
         const answer = await api.applyPhotos(items);
-        answer.recipes.forEach(updateRecipe);
-        saved += answer.recipes.length;
+        answer.recipes.forEach((recipe) => {
+          updateRecipe(recipe);
+          savedIds.add(recipe.id);
+        });
         failed.push(...answer.failed);
       }
-      setResult({ saved, failed });
+      setResult({ saved: savedIds.size, failed });
       setPhase('done');
     } catch (e) {
-      // What was saved stays saved; the rest can be tried again.
-      setError(`${saved ? `${saved} Fotos sind gespeichert. ` : ''}${messageOf(e)}`);
+      // What was saved stays saved and leaves the list; "übernehmen" again sends only the rest.
+      setCandidates((current) => current.filter((r) => !savedIds.has(r.id)));
+      setError(`${savedIds.size ? `${savedIds.size} Fotos sind gespeichert. ` : ''}${messageOf(e)}`);
       setPhase('review');
     }
   };

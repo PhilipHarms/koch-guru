@@ -95,7 +95,11 @@ def normalize_url(url: str) -> str:
 async def fetch_page(url: str, http: httpx.AsyncClient) -> tuple[str, str]:
     """(final URL after redirects, HTML)."""
     try:
-        response = await http.get(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "de,en;q=0.8"})
+        response = await http.get(url, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "de,en;q=0.8",
+        })
     except httpx.HTTPError as exc:
         raise RecipeImportError("Die Seite konnte ich nicht erreichen.") from exc
     if response.status_code >= 400:
@@ -249,9 +253,19 @@ def _steps(instructions: Any) -> list[str]:
     return []
 
 
+def secure_url(value: str) -> str | None:
+    """An image address as https: "//cdn…" and "http://…" become https, which browsers load anyway."""
+    value = value.strip()
+    if value.startswith("//"):
+        return "https:" + value
+    if value.startswith("http://"):
+        return "https://" + value[len("http://"):]
+    return value if value.startswith("https://") else None
+
+
 def _image(value: Any) -> str | None:
     if isinstance(value, str):
-        return value if value.startswith("http") else None
+        return secure_url(value)
     if isinstance(value, list):
         return next((img for v in value if (img := _image(v))), None)
     if isinstance(value, dict):

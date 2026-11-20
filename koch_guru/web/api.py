@@ -38,6 +38,7 @@ from koch_guru.services.importer import (
     RecipeDraft,
     RecipeImportError,
     clean_emoji,
+    secure_url,
     filter_tags,
     import_from_photos,
     import_from_url,
@@ -813,11 +814,13 @@ async def apply_photos(body: PhotoApply, request: Request) -> dict[str, Any]:
     updated: list[dict[str, Any]] = []
     failed: list[str] = []
     for item in body.items:
-        if not item.image.startswith("https://"):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Nur Fotos mit https://-Adresse.")
         recipe = await find_recipe(repo, item.id)
+        image = secure_url(item.image)
+        if not image:  # one unusable address does not stop the others
+            failed.append(recipe.name)
+            continue
         try:
-            await repo.set_cover_url(recipe.id, item.image)
+            await repo.set_cover_url(recipe.id, image)
         except APIResponseError as exc:
             log.warning("Titelbild für %s nicht gesetzt: %s", recipe.id, exc.code)
             failed.append(recipe.name)

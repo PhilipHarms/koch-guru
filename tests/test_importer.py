@@ -268,3 +268,11 @@ async def test_photo_from_the_recipe_data_comes_first():
     draft = await import_from_url("https://example.com/recipe", http_client({"/recipe": (200, page, "text/html")}),
                                   FakeLLM(), TAGS)
     assert draft.image == "https://img.example/a.jpg"
+
+
+def test_image_addresses_become_https():
+    from koch_guru.services.importer import _image
+    assert _image("http://example.com/a.jpg") == "https://example.com/a.jpg"
+    assert _image("//cdn.example.com/a.jpg") == "https://cdn.example.com/a.jpg"
+    assert _image([" ", {"url": "https://example.com/b.jpg"}]) == "https://example.com/b.jpg"
+    assert _image("data:image/png;base64,xx") is None and _image("/relativ.jpg") is None

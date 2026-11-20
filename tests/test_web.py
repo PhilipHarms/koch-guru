@@ -904,8 +904,10 @@ def test_apply_photos_sets_covers():
     data = c.post("/api/photos/apply", json={"items": [{"id": DAL_ID, "image": "https://example.com/dal.jpg"}]}).json()
     assert repo.cover_urls == [(DAL_ID, "https://example.com/dal.jpg")]
     assert data["failed"] == [] and data["recipes"][0]["image"].startswith(f"/api/recipes/{DAL_ID.replace('-', '')}/image")
-    bad = c.post("/api/photos/apply", json={"items": [{"id": DAL_ID, "image": "http://example.com/x.jpg"}]})
-    assert bad.status_code == 422
+    mixed = c.post("/api/photos/apply", json={"items": [
+        {"id": DAL_ID, "image": "http://example.com/x.jpg"}, {"id": PASTA_ID, "image": "ftp://example.com/y.jpg"}]}).json()
+    assert repo.cover_urls[-1] == (DAL_ID, "https://example.com/x.jpg")  # http becomes https
+    assert mixed["failed"] == ["Pasta e ceci"] and len(mixed["recipes"]) == 1  # the other one still saved
     assert client(repo).get("/api/photos/missing").status_code == 401
 
 
