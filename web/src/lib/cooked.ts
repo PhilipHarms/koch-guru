@@ -36,3 +36,11 @@ export function localToday(today = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 }
+
+/** Cooked within this many days counts as cooked this week. */
+const THIS_WEEK_DAYS = 7;
+
+/** Cooked lately, so taking it off the week list need not ask whether it was cooked. */
+export function cookedThisWeek(recipe: Recipe, today = new Date()): boolean {
+  return recipe.last_cooked != null && daysSince(recipe.last_cooked, today) < THIS_WEEK_DAYS;
+}

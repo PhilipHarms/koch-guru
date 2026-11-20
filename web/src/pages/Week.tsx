@@ -2,14 +2,20 @@ import { useEffect, useState } from 'preact/hooks';
 import { api, type Recipe } from '../lib/api';
 import { useData } from '../lib/data';
 import { messageOf, recipePath, sourceOf } from '../lib/recipe';
+import { cookedLabel, cookedThisWeek } from '../lib/cooked';
+import { AskCookedSheet } from '../components/AskCookedSheet';
 import { RecipeImage } from '../components/RecipeImage';
 import { KreuzIcon } from '../components/icons';
 
 export function WeekRoute() {
-  const { recipes, weekSupported, updateRecipe, weekCleared } = useData();
+  const { recipes, weekSupported, cookedSupported, updateRecipe, weekCleared } = useData();
   const planned = recipes.filter((r) => r.this_week);
+  // Without the cooking mode nobody noted that these were cooked; leaving the list, they get asked about.
+  const unsure = cookedSupported ? planned.filter((r) => !cookedThisWeek(r)) : [];
   const [busy, setBusy] = useState<string | null>(null); // recipe id, or "alle"
   const [confirming, setConfirming] = useState(false);
+  const [asking, setAsking] = useState<Recipe | null>(null);
+  const [cookedOnes, setCookedOnes] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => window.scrollTo(0, 0), []);
@@ -26,12 +32,24 @@ export function WeekRoute() {
     }
   };
 
-  const remove = (recipe: Recipe) => run(recipe.id, async () => updateRecipe(await api.setThisWeek(recipe.id, false)));
+  const takeOff = (recipe: Recipe) => run(recipe.id, async () => updateRecipe(await api.setThisWeek(recipe.id, false)));
+  const remove = (recipe: Recipe) => (unsure.includes(recipe) ? setAsking(recipe) : takeOff(recipe));
+  const toggleCooked = (id: string) =>
+    setCookedOnes((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const clear = () =>
     run('alle', async () => {
+      for (const recipe of unsure.filter((r) => cookedOnes.has(r.id))) {
+        updateRecipe(await api.cooked(recipe.id, {}));
+      }
       await api.clearWeek();
       weekCleared();
       setConfirming(false);
+      setCookedOnes(new Set());
     });
 
   const summary = planned.length === 0
@@ -69,7 +87,11 @@ export function WeekRoute() {
                   <RecipeImage recipe={recipe} size="woche" />
                   <span class="woche-text">
                     <span class="titel-karte">{recipe.name}</span>
-                    <span class="meta muted">{sourceOf(recipe)}</span>
+                    {cookedSupported && cookedThisWeek(recipe) ? (
+                      <span class="meta woche-gekocht">{cookedLabel(recipe.last_cooked!)}</span>
+                    ) : (
+                      <span class="meta muted">{sourceOf(recipe)}</span>
+                    )}
                   </span>
                 </a>
                 <button type="button" class="kg-iconbtn woche-entfernen" disabled={busy !== null}
@@ -86,6 +108,19 @@ export function WeekRoute() {
                 <p class="text-klein">
                   {planned.length === 1 ? 'Das Rezept' : `Alle ${planned.length} Rezepte`} von der Wochenliste nehmen?
                 </p>
+                {unsure.length > 0 && (
+                  <fieldset class="woche-gekocht-wahl" disabled={busy !== null}>
+                    <legend class="text-klein muted">
+                      {unsure.length === 1 ? 'Habt ihr das gekocht?' : 'Was davon habt ihr gekocht?'} Abgehaktes wird als gekocht eingetragen.
+                    </legend>
+                    {unsure.map((recipe) => (
+                      <label key={recipe.id}>
+                        <input type="checkbox" checked={cookedOnes.has(recipe.id)} onChange={() => toggleCooked(recipe.id)} />
+                        {recipe.name}
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
                 <div class="knopf-reihe">
                   <button type="button" class="kg-btn kg-btn-primaer" disabled={busy !== null} onClick={clear}>
                     Ja, leeren
@@ -127,6 +162,11 @@ export function WeekRoute() {
       )}
 
       {error && <p class="page-pad fehler" role="alert">{error}</p>}
+
+      {asking && (
+        <AskCookedSheet recipe={asking} onCancel={() => setAsking(null)}
+          onDecided={() => { setAsking(null); takeOff(asking); }} />
+      )}
     </main>
   );
 }
