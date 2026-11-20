@@ -241,11 +241,14 @@ function ThisWeek({ recipes, picks, exclude }: { recipes: Recipe[]; picks: Daily
             ))}
           </ul>
           {error && <p class="fehler" role="alert">{error}</p>}
-          {candidates.length > WEEK_IDEAS && (
-            <button type="button" class="rezept-link" onClick={() => setOffset((o) => o + WEEK_IDEAS)}>
-              Andere Ideen
-            </button>
-          )}
+          <div class="heute-woche-links">
+            {candidates.length > WEEK_IDEAS && (
+              <button type="button" class="rezept-link" onClick={() => setOffset((o) => o + WEEK_IDEAS)}>
+                Andere Ideen
+              </button>
+            )}
+            <a class="rezept-link" href="/woche/planen">Ganze Woche planen</a>
+          </div>
         </div>
       )}
     </section>

@@ -7,6 +7,7 @@ import { TabBar } from './components/TabBar';
 import { RecipesRoute } from './pages/Recipes';
 import { RecipeRoute } from './pages/Recipe';
 import { WeekRoute } from './pages/Week';
+import { PlanWeekPage } from './pages/PlanWeek';
 import { TodayRoute } from './pages/Today';
 import { ShoppingRoute } from './pages/Shopping';
 import { CookRoute } from './pages/Cook';
@@ -96,6 +97,7 @@ export function App() {
             <Route path="/rezepte/:id/kochen" component={CookRoute} />
             <Route path="/rezepte/:id/bearbeiten" component={EditRoute} />
             <Route path="/woche" component={WeekRoute} />
+            <Route path="/woche/planen" component={PlanWeekPage} />
             <Route path="/einkauf" component={ShoppingRoute} />
             <Route default component={NotFoundRoute} />
           </Router>

@@ -56,6 +56,9 @@ export type Suggestions = {
   history_entry: string;
 };
 
+/** A recipe idea from "Woche planen"; `quick` when it is done fast. */
+export type WeekSuggestion = { recipe: Recipe; reason: string; quick: boolean };
+
 export type GeneratedIngredient = {
   line: string;
   amount: string | null;
@@ -270,6 +273,9 @@ export const api = {
   rate: (id: string, stars: number) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/rating`, { method: 'PUT', body: JSON.stringify({ stars }) }),
   clearWeek: () => request<{ cleared: number }>('/api/week/clear', { method: 'POST' }),
+  /** Ideas for the week; `keep` are already chosen, `exclude` were shown before. */
+  planWeek: (body: { count: number; keep?: string[]; exclude?: string[] }) =>
+    request<{ suggestions: WeekSuggestion[] }>('/api/week/plan', { method: 'POST', body: JSON.stringify(body) }),
   setThisWeek: (id: string, thisWeek: boolean) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}`, {
       method: 'PATCH',

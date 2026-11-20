@@ -921,3 +921,24 @@ def test_quarter_stars():
     assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 0.75}).status_code == 200
     assert repo.cooked[-1][3] == 0.75
     assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 0.1}).status_code == 422
+
+
+def test_week_plan():
+    from koch_guru.services.week import WeekPick, WeekPlan
+
+    class PlanLLM:
+        async def structured(self, *, system, messages, output_type):
+            assert output_type is WeekPlan
+            self.system = system
+            return WeekPlan(rezepte=[WeekPick(nr=1, grund="mal wieder", schnell=True)])
+
+    llm = PlanLLM()
+    repo = FakeRepo()
+    c = signed_in(repo, llm=llm)
+    data = c.post("/api/week/plan", json={"count": 2, "exclude": [DAL_ID.replace("-", "")]}).json()
+    (only,) = data["suggestions"]
+    assert only["recipe"]["name"] == "Pasta e ceci" and only["reason"] == "mal wieder" and only["quick"] is True
+    assert "Kürbis-Dal" not in llm.system.split("<rezeptsammlung>")[1]
+    assert repo.updates == []  # suggesting writes nothing
+    assert signed_in(FakeRepo()).post("/api/week/plan", json={}).status_code == 503
+    assert c.post("/api/week/plan", json={"count": 9}).status_code == 422

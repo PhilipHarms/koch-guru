@@ -8,6 +8,7 @@ import binascii
 import dataclasses
 import hashlib
 import logging
+from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,6 +32,7 @@ from koch_guru.page_content import (
 from koch_guru.services.drafts import DraftStore
 from koch_guru.services.generate import generate, line_name, name_ingredients, prepare
 from koch_guru.services.photos import find_photo
+from koch_guru.services.week import WEEK_SIZE, plan_week
 from koch_guru.services.importer import (
     MAX_PHOTOS,
     PHOTO_TYPES,
@@ -827,3 +829,36 @@ async def apply_photos(body: PhotoApply, request: Request) -> dict[str, Any]:
             continue
         updated.append(recipe_json(await find_recipe(repo, recipe.id)))
     return {"recipes": updated, "failed": failed}
+
+
+# --- Woche planen ---------------------------------------------------------------------------
+
+class WeekPlanRequest(BaseModel):
+    count: int = Field(default=WEEK_SIZE, ge=1, le=7)
+    keep: list[str] = Field(default_factory=list, max_length=7)  # suggestions already ticked
+    exclude: list[str] = Field(default_factory=list, max_length=100)  # shown before
+
+
+@router.post("/week/plan")
+async def week_plan(body: WeekPlanRequest, request: Request) -> dict[str, Any]:
+    """Suggestions for the week, chosen by Claude from the collection. Writes nothing."""
+    llm = request.app.state.llm
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vorschläge sind gerade nicht verfügbar")
+    recipes = await repo_of(request).list_recipes()
+    keep_ids = {i.replace("-", "") for i in body.keep}
+    exclude_ids = {i.replace("-", "") for i in body.exclude}
+    keep = [r for r in recipes if r.id.replace("-", "") in keep_ids]
+    exclude = {r.id for r in recipes if r.id.replace("-", "") in exclude_ids}
+    try:
+        suggestions = await plan_week(
+            recipes, llm, today=date.fromisoformat(today()), count=body.count, keep=keep, exclude_ids=exclude
+        )
+    except Exception as exc:  # the model or OpenRouter failed; the app shows a short note
+        log.warning("Wochenplanung fehlgeschlagen: %r", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="KochGuru hat gerade keine Antwort. Versuch es gleich noch einmal."
+        ) from exc
+    return {"suggestions": [
+        {"recipe": recipe_json(s.recipe), "reason": s.reason, "quick": s.quick} for s in suggestions
+    ]}

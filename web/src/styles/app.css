@@ -209,6 +209,7 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 .heute-woche-ideen { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-8); }
 .heute-woche-ideen > p { margin: 0; }
 .heute-woche-ideen .kg-liste { width: 100%; }
+.heute-woche-links { display: flex; flex-wrap: wrap; gap: 0 var(--space-20); }
 .heute-woche-idee { display: flex; align-items: center; gap: var(--space-10); }
 .heute-woche-idee .kg-zeile { flex: 1; min-width: 0; }
 
@@ -503,3 +504,26 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
   padding: 3px 10px; border-radius: var(--radius-pill); background: var(--ink); color: var(--surface);
   font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+
+/* Woche planen */
+.planen-inhalt { display: flex; flex-direction: column; gap: var(--space-16); padding-bottom: 104px; }
+.planen-inhalt > p { margin: 0; }
+.planen-inhalt > .kg-btn { align-self: flex-start; }
+.planen-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-12); transition: opacity 0.2s ease; }
+.planen-tauscht .planen-aus { opacity: 0.4; }
+.planen-zeile { border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
+.planen-label { display: flex; align-items: center; gap: var(--space-14); padding: var(--space-12); cursor: pointer; }
+.planen-label input { flex-shrink: 0; width: 24px; height: 24px; margin: 0; accent-color: var(--brand); }
+.planen-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-4); }
+.planen-text .titel-karte { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.planen-grund { font-size: 14px; line-height: 1.35; color: var(--ink-muted); }
+.planen-schnell { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--tag-zeit-bg); color: var(--tag-zeit-ink); font-size: 12px; font-weight: 700; }
+.planen-aus .kg-bild, .planen-aus .planen-text { opacity: 0.5; }
+.planen-tauschen { align-self: center; }
+.planen-platzhalter .kg-bild { background: var(--surface-cream); }
+.planen-strich { display: block; width: 70%; height: 14px; border-radius: 7px; background: var(--surface-cream); }
+.planen-strich.kurz { width: 45%; }
+@media (prefers-reduced-motion: no-preference) {
+  .planen-platzhalter .kg-bild, .planen-strich { animation: planen-puls 1.4s ease-in-out infinite; }
+}
+@keyframes planen-puls { 50% { opacity: 0.45; } }
