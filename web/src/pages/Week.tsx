@@ -53,8 +53,11 @@ export function WeekRoute() {
         <div class="page-pad">
           <div class="leer-box">
             <h2 class="titel-block">Noch nichts geplant</h2>
-            <p class="text-klein">Such dir Rezepte aus und tippe dort auf „Auf die Wochenliste“.</p>
-            <a class="kg-btn kg-btn-primaer" href="/rezepte">Zu den Rezepten</a>
+            <p class="text-klein">Lass dir von KochGuru eine Woche vorschlagen oder such selbst Rezepte aus.</p>
+            <div class="knopf-reihe">
+              <a class="kg-btn kg-btn-primaer" href="/woche/planen">Woche planen</a>
+              <a class="kg-btn kg-btn-sekundaer" href="/rezepte">Zu den Rezepten</a>
+            </div>
           </div>
         </div>
       ) : (
@@ -102,8 +105,11 @@ export function WeekRoute() {
           <div class="page-pad">
             <div class="leer-box">
               <h2 class="titel-block">Noch ein Abend frei?</h2>
-              <p class="text-klein">Such dir ein Rezept aus und setz es auf die Wochenliste.</p>
-              <a class="kg-btn kg-btn-primaer" href="/rezepte">Zu den Rezepten</a>
+              <p class="text-klein">Lass dir von KochGuru etwas vorschlagen oder such selbst ein Rezept aus.</p>
+              <div class="knopf-reihe">
+                <a class="kg-btn kg-btn-primaer" href="/woche/planen">Ideen holen</a>
+                <a class="kg-btn kg-btn-sekundaer" href="/rezepte">Zu den Rezepten</a>
+              </div>
             </div>
           </div>
         </>
