@@ -493,6 +493,16 @@ def test_cooked_with_stars_and_note_for_the_signed_in_person():
     assert signed_in(repo).post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 6}).status_code == 422
 
 
+def test_cooked_leaves_the_week_list():
+    repo = FakeRepo()
+    c = signed_in(repo)
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={}).json()["this_week"] is False
+    assert c.post(f"/api/recipes/{PASTA_ID}/cooked", json={}).json()["this_week"] is False  # was not on it
+    assert [u for u in repo.updates if u[0] == PASTA_ID] == []
+    repo = FakeRepo(week_supported=False)
+    assert signed_in(repo).post(f"/api/recipes/{DAL_ID}/cooked", json={}).status_code == 200
+
+
 def test_rating_is_only_ever_your_own():
     repo = FakeRepo()
     c = signed_in(repo)  # Philip
@@ -942,3 +952,27 @@ def test_week_plan():
     assert repo.updates == []  # suggesting writes nothing
     assert signed_in(FakeRepo()).post("/api/week/plan", json={}).status_code == 503
     assert c.post("/api/week/plan", json={"count": 9}).status_code == 422
+
+
+def test_step_links_read_by_kochguru():
+    from koch_guru.services.step_links import StepLink, StepLinks
+
+    class LinkLLM:
+        calls = 0
+
+        async def structured(self, *, system, messages, output_type, max_tokens=None):
+            LinkLLM.calls += 1
+            assert "[1] 500 g Kürbis" in messages[0]["content"]
+            return StepLinks(schritte=[StepLink(schritt=1, zutaten=[1])])
+
+    c = signed_in(llm=LinkLLM())
+    assert c.get(f"/api/recipes/{DAL_ID}/step-links").json() == {"uses": [[0]]}
+    assert c.get(f"/api/recipes/{DAL_ID}/step-links").json() == {"uses": [[0]]}
+    assert LinkLLM.calls == 1
+    assert signed_in().get(f"/api/recipes/{DAL_ID}/step-links").status_code == 503
+
+    class Broken:
+        async def structured(self, **kwargs):
+            raise RuntimeError("weg")
+
+    assert signed_in(llm=Broken()).get(f"/api/recipes/{DAL_ID}/step-links").status_code == 502

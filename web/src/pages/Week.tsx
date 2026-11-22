@@ -43,6 +43,7 @@ export function WeekRoute() {
     });
   const clear = () =>
     run('alle', async () => {
+      // Marked cooked, they leave the list right away; clearing takes the rest.
       for (const recipe of unsure.filter((r) => cookedOnes.has(r.id))) {
         updateRecipe(await api.cooked(recipe.id, {}));
       }
@@ -164,8 +165,8 @@ export function WeekRoute() {
       {error && <p class="page-pad fehler" role="alert">{error}</p>}
 
       {asking && (
-        <AskCookedSheet recipe={asking} onCancel={() => setAsking(null)}
-          onDecided={() => { setAsking(null); takeOff(asking); }} />
+        <AskCookedSheet recipe={asking} onCancel={() => setAsking(null)} onCooked={() => setAsking(null)}
+          onRemoveOnly={() => { setAsking(null); takeOff(asking); }} />
       )}
     </main>
   );
