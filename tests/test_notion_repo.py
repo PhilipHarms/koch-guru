@@ -664,7 +664,7 @@ async def test_mark_cooked_sets_date_stars_and_appends_the_note():
     fake.pages[0]["properties"]["Notiz"] = {"type": "rich_text", "rich_text": text("01.11.2026 Charlotte: lecker")}
     repo = make_repo(fake, people=["Philip", "Charlotte"])
     await repo.list_recipes()
-    recipe = await repo.mark_cooked("page-0", person="Philip", today="2026-11-19", stars=4, note="  mehr   Chili ")
+    recipe = await repo.mark_cooked("page-0", person="Philip", day="2026-11-19", stars=4, note="  mehr   Chili ")
     props = fake.updates[-1][1]["properties"]
     assert props["Zuletzt gekocht"] == {"date": {"start": "2026-11-19"}}
     assert props["bewertung philip"] == {"number": 4}  # the name as it is in Notion
@@ -677,6 +677,33 @@ async def test_mark_cooked_sets_date_stars_and_appends_the_note():
     recipe = await repo.set_rating("page-0", "Philip", None)
     assert recipe.ratings == (("Charlotte", 5),)
 
+
+
+class StubLog:
+    def __init__(self, fail=False):
+        self.added, self.fail = [], fail
+
+    async def add(self, **entry):
+        if self.fail:
+            from notion_client import APIErrorCode, APIResponseError
+            raise APIResponseError(APIErrorCode.ValidationError, 400, "kaputt", httpx.Headers(), "")
+        self.added.append(entry)
+
+
+async def test_mark_cooked_writes_the_log():
+    fake = FakeNotion(total=1)
+    fake.recipe_schema |= {"Zuletzt gekocht": {"type": "date"}}
+    repo = make_repo(fake, people=["Philip"])
+    repo.cook_log = StubLog()
+    await repo.list_recipes()
+    recipe = await repo.mark_cooked("page-0", person="Philip", day="2026-11-20", stars=4, source="Nachgetragen")
+    assert recipe.last_cooked == "2026-11-20"
+    assert repo.cook_log.added == [{"recipe_id": "page-0", "name": "Rezept 000", "day": "2026-11-20",
+                                    "person": "Philip", "stars": 4, "note": None, "source": "Nachgetragen"}]
+
+    repo.cook_log = StubLog(fail=True)  # the recipe still counts as cooked
+    recipe = await repo.mark_cooked("page-0", person="Philip", day="2026-11-23")
+    assert recipe.last_cooked == "2026-11-23"
 
 def test_long_notes_drop_the_oldest_lines():
     from koch_guru.notion_repo import NOTE_LIMIT, append_note

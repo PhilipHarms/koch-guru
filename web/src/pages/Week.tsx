@@ -45,7 +45,7 @@ export function WeekRoute() {
     run('alle', async () => {
       // Marked cooked, they leave the list right away; clearing takes the rest.
       for (const recipe of unsure.filter((r) => cookedOnes.has(r.id))) {
-        updateRecipe(await api.cooked(recipe.id, {}));
+        updateRecipe(await api.cooked(recipe.id, { later: true }));
       }
       await api.clearWeek();
       weekCleared();

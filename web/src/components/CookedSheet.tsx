@@ -4,8 +4,16 @@ import { useData } from '../lib/data';
 import { messageOf } from '../lib/recipe';
 import { Stars } from './Stars';
 
-/** "Wie war's?": today as "Zuletzt gekocht", your stars and a note. */
-export function CookedSheet({ recipe, onCancel, onSaved }: { recipe: Recipe; onCancel: () => void; onSaved: () => void }) {
+/**
+ * "Wie war's?": your stars and a note; it goes into the "Kochprotokoll" with today's date.
+ * `later`: noted afterwards, not at the end of the cooking mode; the week is what counts.
+ */
+export function CookedSheet({ recipe, later = false, onCancel, onSaved }: {
+  recipe: Recipe;
+  later?: boolean;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
   const { me, people, updateRecipe } = useData();
   const [stars, setStars] = useState(recipe.ratings?.[me.name] ?? 0);
   const [note, setNote] = useState('');
@@ -17,7 +25,11 @@ export function CookedSheet({ recipe, onCancel, onSaved }: { recipe: Recipe; onC
     setSaving(true);
     setError(null);
     try {
-      updateRecipe(await api.cooked(recipe.id, { stars: canRate && stars ? stars : null, note: note.trim() || null }));
+      updateRecipe(await api.cooked(recipe.id, {
+        stars: canRate && stars ? stars : null,
+        note: note.trim() || null,
+        ...(later ? { later: true } : {}),
+      }));
       onSaved();
     } catch (err) {
       setError(messageOf(err));

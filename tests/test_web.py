@@ -1,6 +1,7 @@
 """Web app: login by personal link, API access control and recipe endpoints."""
 
 import dataclasses
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -43,13 +44,15 @@ class FakeRepo:
         self.people = ["Philip", "Charlotte"]
         self.supports_cooked = True
         self.cooked = []
+        self.cook_log = SimpleNamespace(status=lambda: {"ready": True, "url": None, "problem": None})
 
-    async def mark_cooked(self, page_id, *, person, today, stars=None, note=None):
-        self.cooked.append((page_id, person, today, stars, note))
+    async def mark_cooked(self, page_id, *, person, day, stars=None, note=None, source="Kochmodus"):
+        self.cooked.append((page_id, person, day, stars, note))
+        self.cooked_sources = getattr(self, "cooked_sources", []) + [source]
         ratings = dict(self._recipe(page_id).ratings)
         if stars:
             ratings[person] = stars
-        self._set(page_id, last_cooked=today, ratings=tuple(ratings.items()), note=note)
+        self._set(page_id, last_cooked=day, ratings=tuple(ratings.items()), note=note)
 
     async def set_rating(self, page_id, person, stars):
         ratings = {p: s for p, s in self._recipe(page_id).ratings if p != person}
@@ -491,6 +494,19 @@ def test_cooked_with_stars_and_note_for_the_signed_in_person():
     assert (page_id, person, stars, note) == (DAL_ID, "Charlotte", 4, "mehr Chili")
     assert data["last_cooked"] == day and data["ratings"] == {"Charlotte": 4}
     assert signed_in(repo).post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 6}).status_code == 422
+
+
+def test_cooked_afterwards_is_noted_as_such(monkeypatch):
+    import koch_guru.web.api as web_api
+
+    monkeypatch.setattr(web_api, "today", lambda: "2026-11-23")
+    repo = FakeRepo()
+    c = signed_in(repo)
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"later": True}).status_code == 200
+    assert repo.cooked[-1][2] == "2026-11-23" and repo.cooked_sources[-1] == "Nachgetragen"
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={}).status_code == 200
+    assert repo.cooked_sources[-1] == "Kochmodus"
+    assert c.get("/api/recipes").json()["cook_log"]["ready"] is True
 
 
 def test_cooked_leaves_the_week_list():

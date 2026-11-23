@@ -14,7 +14,7 @@ export function AskCookedSheet({ recipe, onCancel, onCooked, onRemoveOnly }: {
   onRemoveOnly: () => void;
 }) {
   const [rating, setRating] = useState(false);
-  if (rating) return <CookedSheet recipe={recipe} onCancel={onCancel} onSaved={onCooked} />;
+  if (rating) return <CookedSheet recipe={recipe} later onCancel={onCancel} onSaved={onCooked} />;
   return (
     <>
       <div class="blatt-hintergrund" aria-hidden="true" onClick={onCancel} />
