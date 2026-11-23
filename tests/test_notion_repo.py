@@ -690,17 +690,15 @@ class StubLog:
         self.added.append(entry)
 
 
-async def test_mark_cooked_writes_the_log_and_keeps_a_later_date():
+async def test_mark_cooked_writes_the_log():
     fake = FakeNotion(total=1)
     fake.recipe_schema |= {"Zuletzt gekocht": {"type": "date"}}
-    fake.pages[0]["properties"]["Zuletzt gekocht"] = {"type": "date", "date": {"start": "2026-11-20"}}
     repo = make_repo(fake, people=["Philip"])
     repo.cook_log = StubLog()
     await repo.list_recipes()
-    recipe = await repo.mark_cooked("page-0", person="Philip", day="2026-11-18", stars=4, source="Nachgetragen")
-    assert fake.updates[-1][1]["properties"]["Zuletzt gekocht"] == {"date": {"start": "2026-11-20"}}
+    recipe = await repo.mark_cooked("page-0", person="Philip", day="2026-11-20", stars=4, source="Nachgetragen")
     assert recipe.last_cooked == "2026-11-20"
-    assert repo.cook_log.added == [{"recipe_id": "page-0", "name": "Rezept 000", "day": "2026-11-18",
+    assert repo.cook_log.added == [{"recipe_id": "page-0", "name": "Rezept 000", "day": "2026-11-20",
                                     "person": "Philip", "stars": 4, "note": None, "source": "Nachgetragen"}]
 
     repo.cook_log = StubLog(fail=True)  # the recipe still counts as cooked

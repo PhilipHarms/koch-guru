@@ -1018,16 +1018,12 @@ class RecipeRepository:
         note: str | None = None,
         source: str = COOKING_MODE,
     ) -> Recipe | None:
-        """"Gekocht" on `day`: "Zuletzt gekocht", the person's stars, the note, and an entry in the log.
-
-        A day earlier than "Zuletzt gekocht" (cooked on Monday, noted after Wednesday's) leaves it.
-        """
+        """"Gekocht" on `day`: "Zuletzt gekocht", the person's stars, the note, and an entry in the log."""
         if not self._mapping or not self._mapping.last_cooked:
             raise RuntimeError(f"Die Rezeptdatenbank hat kein Feld „{self._wanted.last_cooked}“.")
         m = self._mapping
         known = next((r for r in self._cache or [] if r.short_id == page_id.replace("-", "")), None)
-        latest = max(day, known.last_cooked) if known and known.last_cooked else day
-        props: dict[str, Any] = {m.last_cooked: {"date": {"start": latest}}}
+        props: dict[str, Any] = {m.last_cooked: {"date": {"start": day}}}
         prop = dict(m.ratings).get(person)
         if stars and prop:
             props[prop] = {"number": stars}
@@ -1040,7 +1036,7 @@ class RecipeRepository:
             text = append_note(current, f"{date} {person}: {' '.join(note.split())}")
             props[m.note] = {"rich_text": [_text(chunk) for chunk in _chunks(text, MAX_TEXT)]}
         await self._client.pages.update(page_id=page_id, properties=props)
-        recipe = self._replace_cached(page_id, last_cooked=latest, **({"note": text} if text is not None else {}))
+        recipe = self._replace_cached(page_id, last_cooked=day, **({"note": text} if text is not None else {}))
         if stars and prop:
             recipe = self._cache_rating(page_id, person, stars) or recipe
         dish = recipe or known

@@ -541,4 +541,3 @@ button.rezept-link { padding: 0; border: 0; background: transparent; font-family
 }
 @keyframes zutaten-ein { from { opacity: 0; } }
 
-.gekocht-tag { display: flex; flex-wrap: wrap; gap: var(--space-8); margin-top: calc(-1 * var(--space-4)); }

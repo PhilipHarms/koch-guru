@@ -496,18 +496,16 @@ def test_cooked_with_stars_and_note_for_the_signed_in_person():
     assert signed_in(repo).post(f"/api/recipes/{DAL_ID}/cooked", json={"stars": 6}).status_code == 422
 
 
-def test_cooked_on_an_earlier_day_is_noted_as_later(monkeypatch):
+def test_cooked_afterwards_is_noted_as_such(monkeypatch):
     import koch_guru.web.api as web_api
 
     monkeypatch.setattr(web_api, "today", lambda: "2026-11-23")
     repo = FakeRepo()
     c = signed_in(repo)
-    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"day": "2026-11-21", "later": True}).status_code == 200
-    assert repo.cooked[-1][2] == "2026-11-21" and repo.cooked_sources[-1] == "Nachgetragen"
+    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"later": True}).status_code == 200
+    assert repo.cooked[-1][2] == "2026-11-23" and repo.cooked_sources[-1] == "Nachgetragen"
     assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={}).status_code == 200
-    assert repo.cooked[-1][2] == "2026-11-23" and repo.cooked_sources[-1] == "Kochmodus"
-    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"day": "2026-11-24"}).status_code == 422
-    assert c.post(f"/api/recipes/{DAL_ID}/cooked", json={"day": "2026-10-01"}).status_code == 422
+    assert repo.cooked_sources[-1] == "Kochmodus"
     assert c.get("/api/recipes").json()["cook_log"]["ready"] is True
 
 

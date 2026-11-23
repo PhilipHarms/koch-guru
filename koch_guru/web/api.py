@@ -511,36 +511,29 @@ async def add_extra(item: ExtraItem, request: Request) -> dict[str, Any]:
 # --- Cooked and rated ------------------------------------------------------------------
 
 
-LATE_DAYS = 14  # how far back "Gekocht" can be noted
-
-
 class Cooked(BaseModel):
     stars: float | None = Field(default=None, ge=0.25, le=5, multiple_of=0.25)
     note: str | None = Field(default=None, max_length=500)
-    day: date | None = None  # cooked on; today when missing
-    later: bool = False  # noted afterwards ("Gekocht?"), not at the end of the cooking mode
+    # Noted afterwards ("Gekocht?", clearing the week), not at the end of the cooking mode. The date
+    # is then the day of noting: for stats the week counts, so nobody is asked for the day.
+    later: bool = False
 
 
 @router.post("/recipes/{recipe_id}/cooked")
 async def mark_cooked(
     recipe_id: str, body: Cooked, request: Request, user: str = Depends(current_user)
 ) -> dict[str, Any]:
-    """"Gekocht": the day (today by default) as "Zuletzt gekocht", the signed-in person's stars
-    and note, and an entry in the "Kochprotokoll".
+    """"Gekocht": today as "Zuletzt gekocht", the signed-in person's stars and note, and an
+    entry in the "Kochprotokoll".
 
     What is cooked is done for the week, so it also leaves the week list.
     """
     repo = repo_of(request)
     if not repo.supports_cooked:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Die Rezeptdatenbank hat kein Feld „Zuletzt gekocht“.")
-    now = date.fromisoformat(today())
-    day = body.day or now
-    if day > now or (now - day).days > LATE_DAYS:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
-                            detail=f"Nachtragen geht für die letzten {LATE_DAYS} Tage.")
     recipe = await find_recipe(repo, recipe_id)
     stars = quarter_stars(body.stars) if body.stars else None
-    await repo.mark_cooked(recipe.id, person=display_name(user), day=day.isoformat(), stars=stars, note=body.note,
+    await repo.mark_cooked(recipe.id, person=display_name(user), day=today(), stars=stars, note=body.note,
                            source=LATER if body.later else COOKING_MODE)
     if recipe.this_week and repo.supports_this_week:
         await repo.set_this_week(recipe.id, False)
