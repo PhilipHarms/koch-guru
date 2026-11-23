@@ -7,8 +7,9 @@ change made in one is visible in the other right away.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 from notion_client import AsyncClient
@@ -26,12 +27,29 @@ class Core:
     repo: RecipeRepository
     llm: LLMClient
     http: httpx.AsyncClient
+    _background: set[asyncio.Task[object]] = field(default_factory=set)
 
     async def start(self) -> None:
         await self.repo.connect()
         log.info("Modell über OpenRouter: %s", self.llm.model)
+        try:
+            await self.repo.connect_cook_log()
+        except Exception:  # the app works without the log
+            log.exception("Kochprotokoll nicht verbunden")
+        if self.repo.cook_log.ready:
+            task = asyncio.create_task(self._take_over_cook_log())
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+
+    async def _take_over_cook_log(self) -> None:
+        try:
+            await self.repo.take_over_cook_log()
+        except Exception:
+            log.exception("Kochprotokoll: Übernahme aus „Zuletzt gekocht“ abgebrochen")
 
     async def aclose(self) -> None:
+        for task in self._background:
+            task.cancel()
         await self.notion.aclose()
         await self.llm.close()
         await self.http.aclose()

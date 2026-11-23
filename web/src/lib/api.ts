@@ -270,7 +270,8 @@ export const api = {
     }),
   addExtra: (name: string) =>
     request<ShoppingItem>('/api/extras', { method: 'POST', body: JSON.stringify({ name }) }),
-  cooked: (id: string, body: { stars?: number | null; note?: string | null }) =>
+  /** `day`: cooked on (today when missing); `later`: noted afterwards, not at the end of the cooking mode. */
+  cooked: (id: string, body: { stars?: number | null; note?: string | null; day?: string; later?: boolean }) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/cooked`, { method: 'POST', body: JSON.stringify(body) }),
   rate: (id: string, stars: number) =>
     request<Recipe>(`/api/recipes/${encodeURIComponent(id)}/rating`, { method: 'PUT', body: JSON.stringify({ stars }) }),

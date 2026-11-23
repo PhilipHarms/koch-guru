@@ -20,6 +20,7 @@ from notion_client import APIErrorCode, APIResponseError, AsyncClient
 from notion_client.helpers import async_collect_paginated_api, extract_notion_id
 
 from koch_guru.config import PropertyNames
+from koch_guru.cook_log import COOKING_MODE, CookLog
 from koch_guru.models import Ingredient, Recipe
 from koch_guru.services.importer import RecipeDraft, normalize_url
 
@@ -291,6 +292,7 @@ class RecipeRepository:
     ) -> None:
         self._client = client
         self._people = tuple(people)  # who rates recipes, e.g. ("Philip", "Charlotte")
+        self.cook_log = CookLog(client, self._people)  # every time a recipe was cooked
         self._database_id = extract_notion_id(database_id) or database_id
         self._wanted = wanted
         self._cache_seconds = cache_seconds
@@ -330,6 +332,24 @@ class RecipeRepository:
             m.title, m.link, m.tags, m.origin, m.ingredients, m.ingredients_kind, m.this_week,
         )
         return self._mapping
+
+    async def connect_cook_log(self) -> None:
+        """Find or create the "Kochprotokoll" next to the recipes; without it cooking is recorded as before."""
+        if self._data_source_id is None:
+            await self.connect()
+        assert self._data_source_id
+        source = await self._client.data_sources.retrieve(data_source_id=self._data_source_id)
+        ingredients = (self._mapping.ingredients_source or {}) if self._mapping else {}
+        await self.cook_log.connect(
+            recipe_source_id=self._data_source_id,
+            recipe_database_id=self._database_id,
+            recipe_schema=source.get("properties") or {},
+            skip_sources={ingredients["data_source_id"]} if ingredients.get("data_source_id") else set(),
+        )
+
+    async def take_over_cook_log(self) -> int:
+        """Log entries from "Zuletzt gekocht" for recipes the log does not know yet."""
+        return await self.cook_log.take_over(await self.list_recipes())
 
     async def _add_cooking_fields(self, schema: dict[str, dict[str, Any]]) -> bool:
         """Create "Zuletzt gekocht", "Notiz" and one "Bewertung <Name>" per person if missing.
@@ -989,13 +1009,25 @@ class RecipeRepository:
         return self._cache_rating(page_id, person, stars)
 
     async def mark_cooked(
-        self, page_id: str, *, person: str, today: str, stars: float | None = None, note: str | None = None
+        self,
+        page_id: str,
+        *,
+        person: str,
+        day: str,
+        stars: float | None = None,
+        note: str | None = None,
+        source: str = COOKING_MODE,
     ) -> Recipe | None:
-        """"Gekocht": sets "Zuletzt gekocht", the person's stars and appends the note."""
+        """"Gekocht" on `day`: "Zuletzt gekocht", the person's stars, the note, and an entry in the log.
+
+        A day earlier than "Zuletzt gekocht" (cooked on Monday, noted after Wednesday's) leaves it.
+        """
         if not self._mapping or not self._mapping.last_cooked:
             raise RuntimeError(f"Die Rezeptdatenbank hat kein Feld „{self._wanted.last_cooked}“.")
         m = self._mapping
-        props: dict[str, Any] = {m.last_cooked: {"date": {"start": today}}}
+        known = next((r for r in self._cache or [] if r.short_id == page_id.replace("-", "")), None)
+        latest = max(day, known.last_cooked) if known and known.last_cooked else day
+        props: dict[str, Any] = {m.last_cooked: {"date": {"start": latest}}}
         prop = dict(m.ratings).get(person)
         if stars and prop:
             props[prop] = {"number": stars}
@@ -1004,13 +1036,19 @@ class RecipeRepository:
             # Read the note fresh, so a line written in Notion meanwhile is kept.
             page = await self._client.pages.retrieve(page_id=page_id)
             current = _plain_text(((page.get("properties") or {}).get(m.note) or {}).get("rich_text"))
-            day = f"{today[8:10]}.{today[5:7]}.{today[:4]}"
-            text = append_note(current, f"{day} {person}: {' '.join(note.split())}")
+            date = f"{day[8:10]}.{day[5:7]}.{day[:4]}"
+            text = append_note(current, f"{date} {person}: {' '.join(note.split())}")
             props[m.note] = {"rich_text": [_text(chunk) for chunk in _chunks(text, MAX_TEXT)]}
         await self._client.pages.update(page_id=page_id, properties=props)
-        recipe = self._replace_cached(page_id, last_cooked=today, **({"note": text} if text is not None else {}))
+        recipe = self._replace_cached(page_id, last_cooked=latest, **({"note": text} if text is not None else {}))
         if stars and prop:
             recipe = self._cache_rating(page_id, person, stars) or recipe
+        dish = recipe or known
+        try:
+            await self.cook_log.add(recipe_id=page_id, name=dish.name if dish else "", day=day, person=person,
+                                    stars=stars, note=note, source=source)
+        except APIResponseError as exc:  # the recipe has it; only the log misses this one
+            log.warning("Kochprotokoll-Eintrag für %s nicht geschrieben: %s", page_id, exc.code)
         return recipe
 
     def _cache_rating(self, page_id: str, person: str, stars: float | None) -> Recipe | None:
