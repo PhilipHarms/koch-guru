@@ -7,6 +7,7 @@ import { load, save } from '../lib/storage';
 import { queryWords, searchScore } from '../lib/search';
 import { hasOwnEmoji, tagStyle } from '../lib/tiles';
 import { categories } from '../lib/categories';
+import { BOTH, FAVORITE_STARS, favoriteStars, favorites } from '../lib/favorites';
 import { RecipeImage } from '../components/RecipeImage';
 import { AufklappenIcon, KachelnIcon, KreuzIcon, ListeIcon, PlusIcon, SucheIcon } from '../components/icons';
 
@@ -26,14 +27,20 @@ function compare(sort: Sort): (a: Recipe, b: Recipe) => number {
   return newest;
 }
 
+/** Whose stars a card shows: the average, or one person's (or both) in their favourites. */
+type StarsOf = (recipe: Recipe) => number | null;
+
 /** "★ 4,5" when rated: quiet proof for the order by rating. */
-function StarsBadge({ recipe }: { recipe: Recipe }) {
-  const stars = averageStars(recipe);
+function StarsBadge({ recipe, starsOf = averageStars }: { recipe: Recipe; starsOf?: StarsOf }) {
+  const stars = starsOf(recipe);
   return stars === null ? null : <span class="kg-sterne-klein">{starsText(stars)}</span>;
 }
 
+/** The "Favoriten" chip: by stars, one person's or everyone's, instead of by tag. */
+const FAVORITES = 'kategorie:Favoriten';
+
 /** Search, filters and scroll position survive a visit to a recipe page and back. */
-const remembered = { query: '', selected: [] as string[], scrollY: 0 };
+const remembered = { query: '', selected: [] as string[], scrollY: 0, whose: '' };
 
 /** Open the overview with this search, e.g. from the search on Heute. */
 export function searchInRecipes(query: string): void {
@@ -77,7 +84,7 @@ function buildChips(recipes: Recipe[]): Chip[] {
   return [...fixed.map(({ key, label, emoji, matches }) => ({ key, label, emoji, matches })), ...tags, ...origins];
 }
 
-function RecipeCard({ recipe }: { recipe: Recipe }) {
+function RecipeCard({ recipe, starsOf }: { recipe: Recipe; starsOf?: StarsOf }) {
   const tag = recipe.tags.map(tagStyle).find(Boolean);
   return (
     <a class="kg-karte" href={recipePath(recipe)}>
@@ -89,19 +96,19 @@ function RecipeCard({ recipe }: { recipe: Recipe }) {
         )}
       </RecipeImage>
       <span class="titel-karte">{recipe.name}</span>
-      <span class="quelle kg-karte-quelle">{sourceOf(recipe)} <StarsBadge recipe={recipe} /></span>
+      <span class="quelle kg-karte-quelle">{sourceOf(recipe)} <StarsBadge recipe={recipe} starsOf={starsOf} /></span>
     </a>
   );
 }
 
-export function RecipeRow({ recipe }: { recipe: Recipe }) {
+export function RecipeRow({ recipe, starsOf }: { recipe: Recipe; starsOf?: StarsOf }) {
   return (
     <li>
       <a class="kg-zeile" href={recipePath(recipe)}>
         <RecipeImage recipe={recipe} size="liste" />
         <span class="kg-zeile-text">
           <span class="titel-karte">{recipe.name}</span>
-          <span class="meta">{sourceOf(recipe)} <StarsBadge recipe={recipe} /></span>
+          <span class="meta">{sourceOf(recipe)} <StarsBadge recipe={recipe} starsOf={starsOf} /></span>
         </span>
       </a>
     </li>
@@ -113,7 +120,7 @@ export function RecipesRoute() {
 }
 
 export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
-  const { people, cookedSupported } = useData();
+  const { me, people, cookedSupported } = useData();
   const sorts = SORTS.filter((s) => (s === 'bewertung' ? people.length > 0 : s === 'gekocht' ? cookedSupported : true));
   const [query, setQuery] = useState(remembered.query);
   const [selected, setSelected] = useState<string[]>(remembered.selected);
@@ -134,10 +141,29 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
 
   const chips = useMemo(() => buildChips(recipes), [recipes]);
 
+  // Favourites by stars: whose list, remembered while the app is open. "Beide" first, unless it is empty.
+  const ratedFavorites = people.length > 0 && selected.includes(FAVORITES);
+  const lists = people.length > 1 ? [...people, BOTH] : people;
+  const [whose, setWhose] = useState(() => {
+    if (lists.includes(remembered.whose)) return remembered.whose;
+    if (lists.includes(BOTH) && favorites(recipes, BOTH, people).length > 0) return BOTH;
+    return people.includes(me.name) ? me.name : lists[0] ?? BOTH;
+  });
+  const chooseWhose = (next: string) => {
+    setWhose(next);
+    remembered.whose = next;
+  };
+  const starsOf: StarsOf | undefined = ratedFavorites ? (r) => favoriteStars(r, whose, people) : undefined;
+
   const words = useMemo(() => queryWords(query), [query]);
   const searching = words.length > 0;
 
   const shown = useMemo(() => {
+    if (ratedFavorites) {
+      // Best rated first; a search only narrows the list.
+      const list = favorites(recipes, whose, people);
+      return searching ? list.filter((r) => searchScore(r, words) > 0) : list;
+    }
     const active = chips.filter((chip) => selected.includes(chip.key));
     const bySort = compare(sorts.includes(sort) ? sort : 'neu');
     const list = recipes
@@ -146,7 +172,7 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
       .filter((hit) => hit.score > 0);
     // While searching, the best matches come first; the chosen order only breaks ties.
     return list.sort((a, b) => b.score - a.score || bySort(a.recipe, b.recipe)).map((hit) => hit.recipe);
-  }, [recipes, words, searching, selected, chips, sort, sorts.join()]);
+  }, [recipes, words, searching, selected, chips, sort, sorts.join(), ratedFavorites, whose, people.join()]);
 
   const chooseView = (next: View) => {
     setView(next);
@@ -204,8 +230,22 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
         </div>
       )}
 
+      {ratedFavorites && lists.length > 1 && (
+        <div class="page-pad">
+          <div class="kg-seg favoriten-wer" role="group" aria-label="Wessen Favoriten">
+            {lists.map((name) => (
+              <button type="button" key={name} aria-pressed={whose === name} onClick={() => chooseWhose(name)}>
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div class="page-pad toolbar">
-        {searching ? (
+        {ratedFavorites ? (
+          <p class="sort-button">Ab {FAVORITE_STARS} Sternen, beste zuerst</p>
+        ) : searching ? (
           <p class="sort-button">Beste Treffer zuerst</p>
         ) : (
           <button type="button" class="sort-button" onClick={toggleSort}>
@@ -225,14 +265,20 @@ export function RecipesPage({ recipes }: { recipes: Recipe[] }) {
       </div>
 
       {shown.length === 0 ? (
-        <p class="page-pad empty">Nichts gefunden. Probier einen anderen Begriff oder weniger Filter.</p>
+        <p class="page-pad empty">
+          {ratedFavorites && !searching
+            ? whose === BOTH
+              ? `Noch nichts, was ihr ${people.length === 2 ? 'beide' : 'alle'} mit mindestens ${FAVORITE_STARS} Sternen bewertet habt.`
+              : `Noch keine Favoriten von ${whose}. Favoriten sind Rezepte ab ${FAVORITE_STARS} Sternen.`
+            : 'Nichts gefunden. Probier einen anderen Begriff oder weniger Filter.'}
+        </p>
       ) : view === 'kacheln' ? (
         <div class="kg-raster page-pad">
-          {shown.map((r) => <RecipeCard recipe={r} key={r.id} />)}
+          {shown.map((r) => <RecipeCard recipe={r} key={r.id} starsOf={starsOf} />)}
         </div>
       ) : (
         <ul class="kg-liste page-pad">
-          {shown.map((r) => <RecipeRow recipe={r} key={r.id} />)}
+          {shown.map((r) => <RecipeRow recipe={r} key={r.id} starsOf={starsOf} />)}
         </ul>
       )}
       <a class="kg-fab rezepte-neu" href="/rezepte/neu" aria-label="Rezept hinzufügen">
