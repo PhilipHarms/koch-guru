@@ -29,6 +29,10 @@ body { background: var(--surface-backdrop); min-height: 100vh; }
   padding-bottom: calc(18px + env(safe-area-inset-bottom));
   z-index: 10;
 }
+/* While the keyboard is open (lib/keyboard.ts) the bars fixed to the bottom would float mid-screen. */
+html[data-tastatur] .app-nav,
+html[data-tastatur] .kg-fab,
+html[data-tastatur] .fotos-leiste { display: none; }
 
 .page { display: flex; flex-direction: column; gap: var(--space-20); padding: calc(var(--space-28) + env(safe-area-inset-top)) 0 var(--space-28); }
 .page-pad { padding-left: var(--space-20); padding-right: var(--space-20); }

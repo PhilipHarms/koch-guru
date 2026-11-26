@@ -8,9 +8,12 @@ import './styles/tokens.css';
 import './styles/components.css';
 import './styles/app.css';
 import { App } from './app';
+import { watchKeyboard } from './lib/keyboard';
 
 // The app restores the overview's scroll position itself when coming back from a recipe.
 if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+
+watchKeyboard();
 
 render(<App />, document.getElementById('app')!);
 
